@@ -34,6 +34,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Coins")
 	float RespawnInterval = 2.1f;
 
+	/** Chance each spawn is a big coin (value 10, larger). Rest are small (value 5). */
+	UPROPERTY(EditAnywhere, Category = "Coins", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BigCoinChance = 0.2f;
+
 	UPROPERTY(EditAnywhere, Category = "Coins")
 	TSubclassOf<ACoinPickup> CoinClass;
 

@@ -385,24 +385,27 @@ bool AEnemyUnit::TryAttackEnemyTargets(float DeltaTime)
 	const bool bAtPathEnd = WaypointIndex >= Waypoints.Num();
 	const FVector Origin = GetActorLocation();
 
-	// defenders first if in fire range, else tower (wider range at path end)
+	// notice defenders out to aggro, but only fire/stop inside mutual reach so they can shoot back
 	const float SelectRange = FMath::Max(AttackRange, DefenderAggroRange);
 	ADefenderUnit* Defender = FindNearbyDefender(SelectRange);
 	ACentralTower* Tower = FindTower();
 	const float EffectiveTowerRange = bAtPathEnd ? FMath::Max(AttackRange, TowerAttackRange) : AttackRange;
 
 	float DefenderDistSq = TNumericLimits<float>::Max();
+	float MutualDefenderRange = AttackRange;
 	if (IsValid(Defender) && !Defender->IsActorBeingDestroyed() && Defender->IsAlive())
 	{
 		DefenderDistSq = FVector::DistSquared2D(Origin, Defender->GetActorLocation());
+		MutualDefenderRange = FMath::Min(AttackRange, Defender->GetAttackRange());
 	}
 	else
 	{
 		Defender = nullptr;
 	}
-	const bool bDefenderInFireRange = Defender && DefenderDistSq <= AttackRange * AttackRange;
+	const bool bDefenderInFireRange = Defender && DefenderDistSq <= MutualDefenderRange * MutualDefenderRange;
 
 	float TowerDistSq = TNumericLimits<float>::Max();
+	float MutualTowerRange = EffectiveTowerRange;
 	const bool bTowerAlive = IsValid(Tower) && !Tower->IsActorBeingDestroyed() && Tower->IsAlive();
 	if (!bTowerAlive)
 	{
@@ -411,18 +414,18 @@ bool AEnemyUnit::TryAttackEnemyTargets(float DeltaTime)
 	if (bTowerAlive)
 	{
 		TowerDistSq = FVector::DistSquared2D(Origin, Tower->GetActorLocation());
+		MutualTowerRange = FMath::Min(EffectiveTowerRange, Tower->GetAttackRange());
 	}
-	const bool bTowerInFireRange = bTowerAlive && TowerDistSq <= EffectiveTowerRange * EffectiveTowerRange;
+	const bool bTowerInFireRange = bTowerAlive && TowerDistSq <= MutualTowerRange * MutualTowerRange;
 
 	if (!bDefenderInFireRange && !bTowerInFireRange)
 	{
 		return false;
 	}
 
-	const float StopRange = AttackRange * EngageStopFactor;
-	const float TowerStopRange = bAtPathEnd
-		? FMath::Max(StopRange, TowerAttackRange * EngageStopFactor)
-		: StopRange;
+	// stop inside the target's reach (not out at our longer projectile range)
+	const float StopRange = MutualDefenderRange * EngageStopFactor;
+	const float TowerStopRange = MutualTowerRange * EngageStopFactor;
 	const bool bCloseEnoughToStop =
 		(bDefenderInFireRange && DefenderDistSq <= StopRange * StopRange)
 		|| (bTowerInFireRange && TowerDistSq <= TowerStopRange * TowerStopRange);
@@ -458,8 +461,12 @@ bool AEnemyUnit::TryAttackEnemyTargets(float DeltaTime)
 	}
 	else
 	{
-		// runner melee - only land the hit when close
-		const float MeleeReach = AttackRange * 1.05f;
+		// runner melee - only land the hit when close (use mutual reach vs defenders)
+		float MeleeReach = AttackRange * 1.05f;
+		if (ADefenderUnit* DefTarget = Cast<ADefenderUnit>(TargetActor))
+		{
+			MeleeReach = FMath::Min(AttackRange, DefTarget->GetAttackRange()) * 1.05f;
+		}
 		if (FVector::DistSquared2D(Origin, TargetActor->GetActorLocation()) <= MeleeReach * MeleeReach)
 		{
 			MeleeHit(TargetActor);

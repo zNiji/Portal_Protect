@@ -124,22 +124,8 @@ ACoinPickup::ACoinPickup()
 	if (CoinAsset.Succeeded())
 	{
 		CoinMesh->SetStaticMesh(CoinAsset.Object);
-		const FBoxSphereBounds Bounds = CoinAsset.Object->GetBounds();
-		const float MeshDiameter = FMath::Max(Bounds.BoxExtent.X, Bounds.BoxExtent.Y) * 2.f;
-		// ~55uu pickup size on terrain
-		constexpr float TargetDiameter = 55.f;
-		const float Scale = FMath::Clamp(TargetDiameter / FMath::Max(MeshDiameter, 1.f), 0.05f, 8.f);
-		CoinMesh->SetRelativeScale3D(FVector(Scale));
-
-		const float HalfHeight = Bounds.BoxExtent.Z * Scale;
-		CoinMesh->SetRelativeLocation(FVector(0.f, 0.f, HalfHeight * 0.15f));
-
-		const float OverlapRadius = FMath::Clamp(
-			FMath::Max(Bounds.SphereRadius * Scale * 1.15f, TargetDiameter * 0.55f),
-			40.f, 70.f);
-		CollisionSphere->InitSphereRadius(OverlapRadius);
-
 		bUsingStylizedCoin = true;
+		ApplyVisualScale(55.f);
 	}
 	else
 	{
@@ -152,6 +138,67 @@ ACoinPickup::ACoinPickup()
 			CoinMesh->SetRelativeScale3D(FVector(0.45f, 0.45f, 0.2f));
 		}
 		bUsingStylizedCoin = false;
+	}
+}
+
+void ACoinPickup::ApplyVisualScale(float TargetDiameter)
+{
+	if (!CoinMesh)
+	{
+		return;
+	}
+
+	UStaticMesh* Mesh = CoinMesh->GetStaticMesh();
+	if (!Mesh)
+	{
+		return;
+	}
+
+	const FBoxSphereBounds Bounds = Mesh->GetBounds();
+	const float MeshDiameter = FMath::Max(Bounds.BoxExtent.X, Bounds.BoxExtent.Y) * 2.f;
+	const float Scale = FMath::Clamp(TargetDiameter / FMath::Max(MeshDiameter, 1.f), 0.05f, 8.f);
+	CoinMesh->SetRelativeScale3D(FVector(Scale));
+
+	const float HalfHeight = Bounds.BoxExtent.Z * Scale;
+	CoinMesh->SetRelativeLocation(FVector(0.f, 0.f, HalfHeight * 0.15f));
+
+	const float OverlapMin = (TargetDiameter <= 60.f) ? 40.f : 48.f;
+	const float OverlapMax = (TargetDiameter <= 60.f) ? 70.f : 90.f;
+	const float OverlapRadius = FMath::Clamp(
+		FMath::Max(Bounds.SphereRadius * Scale * 1.15f, TargetDiameter * 0.55f),
+		OverlapMin, OverlapMax);
+	CollisionSphere->InitSphereRadius(OverlapRadius);
+}
+
+void ACoinPickup::ApplyCoinType(ECoinPickupType InType)
+{
+	CoinType = InType;
+	if (InType == ECoinPickupType::Big)
+	{
+		CoinValue = 10;
+		if (bUsingStylizedCoin)
+		{
+			// slightly larger than the 55uu small coin
+			ApplyVisualScale(72.f);
+		}
+		else if (CoinMesh)
+		{
+			CoinMesh->SetRelativeScale3D(FVector(0.6f, 0.6f, 0.28f));
+			CollisionSphere->InitSphereRadius(56.f);
+		}
+	}
+	else
+	{
+		CoinValue = 5;
+		if (bUsingStylizedCoin)
+		{
+			ApplyVisualScale(55.f);
+		}
+		else if (CoinMesh)
+		{
+			CoinMesh->SetRelativeScale3D(FVector(0.45f, 0.45f, 0.2f));
+			CollisionSphere->InitSphereRadius(48.f);
+		}
 	}
 }
 

@@ -84,7 +84,14 @@ void ACoinSpawner::SpawnOneCoin()
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	GetWorld()->SpawnActor<ACoinPickup>(CoinClass, Loc, FRotator::ZeroRotator, Params);
+	ACoinPickup* Coin = GetWorld()->SpawnActor<ACoinPickup>(CoinClass, Loc, FRotator::ZeroRotator, Params);
+	if (Coin)
+	{
+		const ECoinPickupType Type = (FMath::FRand() < BigCoinChance)
+			? ECoinPickupType::Big
+			: ECoinPickupType::Small;
+		Coin->ApplyCoinType(Type);
+	}
 }
 
 int32 ACoinSpawner::CountActiveCoins() const

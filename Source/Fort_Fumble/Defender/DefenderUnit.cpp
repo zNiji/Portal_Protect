@@ -532,7 +532,9 @@ AEnemyUnit* ADefenderUnit::FindNearestEnemyInRange() const
 	UGameplayStatics::GetAllActorsOfClass(World, AEnemyUnit::StaticClass(), Found);
 
 	AEnemyUnit* Best = nullptr;
-	float BestDistSq = AttackRange * AttackRange;
+	// slight grace so enemies stopped at mutual EngageStopFactor stay acquirable
+	const float AcquireRange = AttackRange * 1.05f;
+	float BestDistSq = AcquireRange * AcquireRange;
 	const FVector Origin = GetActorLocation();
 
 	for (AActor* Actor : Found)
@@ -568,7 +570,7 @@ AEnemyUnit* ADefenderUnit::FindMarksmanTarget() const
 	float BestDistSq = 0.f;
 	float BestHealth = -1.f;
 	const FVector Origin = GetActorLocation();
-	const float MaxRangeSq = AttackRange * AttackRange;
+	const float MaxRangeSq = (AttackRange * 1.05f) * (AttackRange * 1.05f);
 
 	for (AActor* Actor : Found)
 	{

@@ -35,6 +35,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Tower")
 	bool IsAlive() const { return Health > 0.f; }
 
+	UFUNCTION(BlueprintPure, Category = "Tower")
+	float GetAttackRange() const { return AttackRange; }
+
 	UPROPERTY(BlueprintAssignable)
 	FOnTowerDestroyed OnTowerDestroyed;
 

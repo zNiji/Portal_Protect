@@ -43,6 +43,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Defender")
 	float GetHealth() const { return Health; }
 
+	UFUNCTION(BlueprintPure, Category = "Defender")
+	float GetAttackRange() const { return AttackRange; }
+
 	// how far pivot is above ground after scale - used when spawning on pad
 	UFUNCTION(BlueprintPure, Category = "Defender")
 	float GetPivotToGroundOffset() const { return PivotToGroundOffset; }
@@ -50,7 +53,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Defender")
 	float MaxHealth = 90.f;
 
-	// needs to reach enemies that stop at ~AttackRange * 0.9
+	// enemies stop-to-shoot at min(their range, this) * EngageStopFactor — keep that inside this value
 	UPROPERTY(EditAnywhere, Category = "Defender|Combat")
 	float AttackRange = 750.f;
 

@@ -81,7 +81,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Enemy|Combat")
 	float DefenderAggroRange = 750.f;
 
-	// fraction of attack range where they actually stop moving (still shoot at full range)
+	// fraction of mutual fire range where they actually stop moving
 	UPROPERTY(EditAnywhere, Category = "Enemy|Combat", meta = (ClampMin = "0.5", ClampMax = "1.0"))
 	float EngageStopFactor = 0.9f;
 

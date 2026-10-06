@@ -5,12 +5,14 @@
 #include "PortalProtectTypes.generated.h"
 
 // slime = baseline, runner = fast cactus, tank = heavy chest monster
+// mutant = seeded per spawn (size, tint, mesh, stats) — see EnemyUnit::ApplyProceduralProfile
 UENUM(BlueprintType)
 enum class EEnemyType : uint8
 {
 	Slime UMETA(DisplayName = "Slime"),
 	Runner UMETA(DisplayName = "Runner"),
-	Tank UMETA(DisplayName = "Tank")
+	Tank UMETA(DisplayName = "Tank"),
+	Mutant UMETA(DisplayName = "Mutant")
 };
 
 // cannon = balanced, marksman = long range burst, mortar = splash groups

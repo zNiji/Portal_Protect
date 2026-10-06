@@ -72,6 +72,8 @@ public:
 private:
 	void BeginWave(int32 WaveNumber);
 	void BuildWaveComposition(int32 WaveNumber);
+	// swap a capped slice of the queue into mutants. waves 1-2 stay on the normal roster
+	void InjectMutants(int32 WaveNumber);
 	void SpawnNextFromQueue();
 	void CleanupDeadRefs();
 	EEnemyType PickTypeForWave(int32 WaveNumber, FRandomStream& Rng) const;
@@ -83,6 +85,8 @@ private:
 
 	TArray<FPortalPath> CachedPaths;
 	TArray<EEnemyType> SpawnQueue;
+	// parallel to SpawnQueue — wave*1000+slot, fed to mutant profiles
+	TArray<int32> SpawnProfileKeys;
 	TArray<TWeakObjectPtr<AEnemyUnit>> AliveThisWave;
 
 	EWavePhase WavePhase = EWavePhase::Resting;

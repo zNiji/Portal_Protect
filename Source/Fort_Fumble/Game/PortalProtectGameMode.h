@@ -154,7 +154,7 @@ public:
 	float WaveBannerDuration = 3.0f;
 
 	UFUNCTION(BlueprintCallable, Category = "PortalProtect|Waves")
-	void ShowWaveBanner(int32 WaveNum);
+	void ShowWaveBanner(int32 WaveNum, bool bIncludesMutants = false);
 
 	UFUNCTION(BlueprintPure, Category = "PortalProtect|Waves")
 	FString GetWaveBannerText() const { return WaveBannerText; }

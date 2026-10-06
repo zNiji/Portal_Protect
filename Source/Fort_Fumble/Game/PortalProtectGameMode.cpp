@@ -518,9 +518,11 @@ void APortalProtectGameMode::ClearStatusMessage()
 	StatusMessage.Empty();
 }
 
-void APortalProtectGameMode::ShowWaveBanner(int32 WaveNum)
+void APortalProtectGameMode::ShowWaveBanner(int32 WaveNum, bool bIncludesMutants)
 {
-	WaveBannerText = FString::Printf(TEXT("Wave %d"), WaveNum);
+	WaveBannerText = bIncludesMutants
+		? FString::Printf(TEXT("Wave %d  |  Mutants"), WaveNum)
+		: FString::Printf(TEXT("Wave %d"), WaveNum);
 	WaveBannerTimeRemaining = WaveBannerDuration;
 }
 

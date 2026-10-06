@@ -1,4 +1,4 @@
-// enemy unit - slime / runner / tank, pathing + combat + HP bar
+// enemy unit - slime / runner / tank / mutant, pathing + combat + HP bar
 #pragma once
 
 #include "CoreMinimal.h"
@@ -29,6 +29,10 @@ public:
 	// pick mesh/stats/anims for slime, runner, or tank
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
 	void InitializeAsType(EEnemyType InType);
+
+	// one mutant. terrain seed + spawn index rebuild the same body every time
+	UFUNCTION(BlueprintCallable, Category = "Enemy")
+	void ApplyProceduralProfile(int32 TerrainSeed, int32 SpawnIndex);
 
 	// waves 1-4 stay at base HP. later waves soak a bit more so upgrades don't erase them
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
@@ -135,6 +139,8 @@ private:
 	void UpdateHealthBar();
 	void ApplyMeshSetup(USkeletalMesh* InMesh, UAnimSequence* InIdle, UAnimSequence* InWalk);
 	void ApplyTint();
+	// solid MID color — pack mats have no tint parameter, so mutants stay readable
+	void ApplyForcedTint(const FLinearColor& Tint);
 	ADefenderUnit* FindNearbyDefender(float Range) const;
 	ACentralTower* FindTower() const;
 	void RefreshDamageVisual();

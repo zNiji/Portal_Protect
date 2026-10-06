@@ -148,6 +148,10 @@ void AEnemyUnit::InitializeAsType(EEnemyType InType)
 		KillScore = 70;
 		break;
 	}
+	case EEnemyType::Mutant:
+		// real roll comes from the spawner (seed + slot). this keeps a placed mutant valid
+		ApplyProceduralProfile(1, 0);
+		return;
 	case EEnemyType::Slime:
 	default:
 	{
@@ -194,6 +198,173 @@ void AEnemyUnit::InitializeAsType(EEnemyType InType)
 		static_cast<int32>(EnemyType), MaxHealth, MoveSpeed, bUsesProjectile ? 1 : 0);
 }
 
+namespace
+{
+	struct FEnemyVisual
+	{
+		const TCHAR* Mesh = nullptr;
+		const TCHAR* Idle = nullptr;
+		const TCHAR* Walk = nullptr;
+	};
+
+	int32 MixMutantSeed(int32 TerrainSeed, int32 SpawnIndex)
+	{
+		uint32 H = static_cast<uint32>(TerrainSeed) * 0x9E3779B1u;
+		H ^= static_cast<uint32>(SpawnIndex) + 0x85EBCA77u + (H << 6) + (H >> 2);
+		return static_cast<int32>(H);
+	}
+
+	bool LoadEnemyVisual(const FEnemyVisual& Visual, USkeletalMesh*& OutMesh, UAnimSequence*& OutIdle, UAnimSequence*& OutWalk)
+	{
+		OutMesh = nullptr;
+		OutIdle = nullptr;
+		OutWalk = nullptr;
+		if (!Visual.Mesh)
+		{
+			return false;
+		}
+
+		OutMesh = LoadObject<USkeletalMesh>(nullptr, Visual.Mesh);
+		if (!OutMesh)
+		{
+			return false;
+		}
+
+		if (Visual.Idle)
+		{
+			OutIdle = LoadObject<UAnimSequence>(nullptr, Visual.Idle);
+		}
+		if (Visual.Walk)
+		{
+			OutWalk = LoadObject<UAnimSequence>(nullptr, Visual.Walk);
+		}
+		return true;
+	}
+
+	// unused pack meshes first. existing roster is only the fallback if a load misses
+	const FEnemyVisual MutantMeshPool[] = {
+		{
+			TEXT("/Game/MonsterForSurvivalGame/Mesh/PBR/Beholder_SK.Beholder_SK"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Beholder/Beholder_IdleNormal_ANIM.Beholder_IdleNormal_ANIM"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Beholder/Beholder_WalkFWD_ANIM.Beholder_WalkFWD_ANIM")
+		},
+		{
+			TEXT("/Game/MonsterForSurvivalGame/Mesh/PBR/Mushroom_SK.Mushroom_SK"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Mushroom/AngryVersion/Mushroom_IdleNormalAngry_ANIM.Mushroom_IdleNormalAngry_ANIM"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Mushroom/AngryVersion/Mushroom_walkFWDAngry_ANIM.Mushroom_walkFWDAngry_ANIM")
+		},
+		{
+			TEXT("/Game/MonsterForSurvivalGame/Mesh/PBR/Swarm08_SK.Swarm08_SK"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Swarm08/Swarm08_Idle_Anim.Swarm08_Idle_Anim"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Swarm08/Swarm08_MoveFWD_Anim.Swarm08_MoveFWD_Anim")
+		},
+		{
+			TEXT("/Game/MonsterForSurvivalGame/Mesh/PBR/TurtleShell_SK.TurtleShell_SK"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/TurtleShell/TurtleShell_IdleNormal_ANIM.TurtleShell_IdleNormal_ANIM"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/TurtleShell/TurtleShell_Walk_ANIM.TurtleShell_Walk_ANIM")
+		},
+	};
+
+	const FEnemyVisual MutantFallbackPool[] = {
+		{
+			TEXT("/Game/MonsterForSurvivalGame/Mesh/PBR/Slime_SK.Slime_SK"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Slime/Slime_IdleNormal_ANIM.Slime_IdleNormal_ANIM"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Slime/Slime_Walk_ANIM.Slime_Walk_ANIM")
+		},
+		{
+			TEXT("/Game/MonsterForSurvivalGame/Mesh/PBR/Cactus_SK.Cactus_SK"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Cactus/Cactus_IdleNormal_ANIM.Cactus_IdleNormal_ANIM"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/Cactus/Cactus_RunFWD_ANIM.Cactus_RunFWD_ANIM")
+		},
+		{
+			TEXT("/Game/MonsterForSurvivalGame/Mesh/PBR/ChestMonster_SK.ChestMonster_SK"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/ChestMonster/ChestMonster_IdleNormal_ANIM.ChestMonster_IdleNormal_ANIM"),
+			TEXT("/Game/MonsterForSurvivalGame/Animation/PBR/ChestMonster/ChestMonster_WalkFWD_ANIM.ChestMonster_WalkFWD_ANIM")
+		},
+	};
+}
+
+void AEnemyUnit::ApplyProceduralProfile(int32 TerrainSeed, int32 SpawnIndex)
+{
+	EnemyType = EEnemyType::Mutant;
+	bTypeConfigured = true;
+	CurrentAnim = nullptr;
+
+	// same seed + spawn index (wave * 1000 + slot) always rebuilds this body
+	FRandomStream Rng(MixMutantSeed(TerrainSeed ^ 0x4D75, SpawnIndex));
+
+	const float BodyScale = Rng.FRandRange(0.75f, 1.45f);
+	const float ScaleT = FMath::Clamp((BodyScale - 0.75f) / 0.70f, 0.f, 1.f);
+
+	const float Hue = Rng.FRand();
+	const float Sat = Rng.FRandRange(0.72f, 1.f);
+	const float Val = Rng.FRandRange(0.62f, 1.f);
+	const FLinearColor Tint = FLinearColor::MakeFromHSV8(
+		static_cast<uint8>(Hue * 255.f),
+		static_cast<uint8>(Sat * 255.f),
+		static_cast<uint8>(Val * 255.f));
+
+	// 1 on red/orange, 0 on the opposite side of the wheel (cyan)
+	const float HueDeg = Hue * 360.f;
+	const float WarmDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(HueDeg, 18.f));
+	const float Warmth = 1.f - FMath::Clamp(WarmDelta / 180.f, 0.f, 1.f);
+
+	// bigger = tougher and slower, smaller = fragile and quick. warmth = hit strength
+	// bands sit between runner and tank so a mutant is a threat, not a wipe or a free kill
+	MaxHealth = FMath::Lerp(50.f, 170.f, ScaleT);
+	MoveSpeed = FMath::Lerp(300.f, 150.f, ScaleT);
+	AttackDamage = FMath::Lerp(7.f, 16.f, Warmth);
+	AttackRange = 750.f;
+	AttackCooldown = 1.1f;
+	DefenderAggroRange = 750.f;
+	TowerAttackRange = 850.f;
+	EngageStopFactor = 0.9f;
+	bUsesProjectile = true;
+	ProjectileSpeed = 860.f;
+	TargetHeight = 90.f * BodyScale;
+	MeshYawOffset = 180.f;
+	MeshTint = Tint;
+	KillScore = FMath::RoundToInt(FMath::Lerp(32.f, 58.f, ScaleT) + Warmth * 6.f);
+
+	const int32 MeshPick = Rng.RandRange(0, UE_ARRAY_COUNT(MutantMeshPool) - 1);
+	USkeletalMesh* NewMesh = nullptr;
+	UAnimSequence* NewIdle = nullptr;
+	UAnimSequence* NewWalk = nullptr;
+	bool bLoaded = LoadEnemyVisual(MutantMeshPool[MeshPick], NewMesh, NewIdle, NewWalk);
+	if (!bLoaded)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PortalProtect] Mutant mesh %d failed to load, using a roster fallback"), MeshPick);
+		for (const FEnemyVisual& Fallback : MutantFallbackPool)
+		{
+			if (LoadEnemyVisual(Fallback, NewMesh, NewIdle, NewWalk))
+			{
+				bLoaded = true;
+				break;
+			}
+		}
+	}
+
+	if (bLoaded)
+	{
+		ApplyMeshSetup(NewMesh, NewIdle, NewWalk);
+		ApplyForcedTint(Tint);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PortalProtect] Mutant has no mesh. Stats still applied."));
+		ApplyTint();
+	}
+
+	Health = MaxHealth;
+	UpdateHealthBar();
+	UpdateLocomotionAnim(false);
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[PortalProtect] Mutant seed=%d idx=%d scale=%.2f hp=%.0f spd=%.0f dmg=%.1f mesh=%d tint=(%.2f,%.2f,%.2f)"),
+		TerrainSeed, SpawnIndex, BodyScale, MaxHealth, MoveSpeed, AttackDamage, MeshPick,
+		Tint.R, Tint.G, Tint.B);
+}
+
 void AEnemyUnit::ApplyLateWaveHealthScale(int32 WaveNumber)
 {
 	// leave the early waves alone — upgrade tokens are rare, so pressure starts once they can stack
@@ -230,7 +401,15 @@ void AEnemyUnit::ApplyMeshSetup(USkeletalMesh* InMesh, UAnimSequence* InIdle, UA
 	Mesh->SetRelativeLocation(FVector(0.f, 0.f, -BottomZ * BaseMeshScale));
 
 	const float Radius = FMath::Max(Bounds.BoxExtent.X, Bounds.BoxExtent.Y) * BaseMeshScale * 0.85f;
-	const float RadiusClampMax = (EnemyType == EEnemyType::Tank) ? 70.f : 55.f;
+	float RadiusClampMax = 55.f;
+	if (EnemyType == EEnemyType::Tank)
+	{
+		RadiusClampMax = 70.f;
+	}
+	else if (EnemyType == EEnemyType::Mutant)
+	{
+		RadiusClampMax = 64.f;
+	}
 	Collision->SetSphereRadius(FMath::Clamp(Radius, 24.f, RadiusClampMax));
 	bUsingMonsterMesh = true;
 
@@ -259,6 +438,40 @@ void AEnemyUnit::ApplyTint()
 			Mid->SetVectorParameterValue(TEXT("BaseColor"), MeshTint);
 			Mid->SetVectorParameterValue(TEXT("Tint"), MeshTint);
 		}
+	}
+}
+
+void AEnemyUnit::ApplyForcedTint(const FLinearColor& Tint)
+{
+	MeshTint = Tint;
+	if (!Mesh)
+	{
+		return;
+	}
+
+	UMaterialInterface* Parent = LoadObject<UMaterialInterface>(
+		nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	if (!Parent)
+	{
+		ApplyTint();
+		return;
+	}
+
+	// engine basic shape mat is authored for static meshes — allow it on this skeletal body
+	Parent->CheckMaterialUsage(MATUSAGE_SkeletalMesh);
+
+	UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this);
+	if (!Mid)
+	{
+		ApplyTint();
+		return;
+	}
+
+	Mid->SetVectorParameterValue(TEXT("Color"), Tint);
+	const int32 MatCount = FMath::Max(Mesh->GetNumMaterials(), 1);
+	for (int32 i = 0; i < MatCount; ++i)
+	{
+		Mesh->SetMaterial(i, Mid);
 	}
 }
 
@@ -510,9 +723,20 @@ void AEnemyUnit::FireProjectileAt(AActor* Target)
 		Shot->InitProjectile(Target, AttackDamage, ProjectileSpeed, this);
 	}
 
-	const FColor LineColor = (EnemyType == EEnemyType::Tank) ? FColor::Red : FColor::Orange;
+	FColor LineColor = FColor::Orange;
+	float LineThickness = 2.f;
+	if (EnemyType == EEnemyType::Tank)
+	{
+		LineColor = FColor::Red;
+		LineThickness = 3.5f;
+	}
+	else if (EnemyType == EEnemyType::Mutant)
+	{
+		LineColor = MeshTint.ToFColor(true);
+		LineThickness = 2.5f;
+	}
 	DrawDebugLine(GetWorld(), Muzzle, Target->GetActorLocation() + FVector(0.f, 0.f, 40.f),
-		LineColor, false, 0.1f, 0, EnemyType == EEnemyType::Tank ? 3.5f : 2.f);
+		LineColor, false, 0.1f, 0, LineThickness);
 }
 
 void AEnemyUnit::MeleeHit(AActor* Target)

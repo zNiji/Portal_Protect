@@ -146,19 +146,29 @@ void AEnemySpawner::BeginWave(int32 WaveNumber)
 	ClearWaitTimer = 0.f;
 	WaveStartTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
 
-	// tell HUD to flash "Wave N" in the middle of the screen
-	if (APortalProtectGameMode* GM = GetWorld()->GetAuthGameMode<APortalProtectGameMode>())
+	int32 MutantCount = 0;
+	for (const EEnemyType Type : SpawnQueue)
 	{
-		GM->ShowWaveBanner(CurrentWave);
+		if (Type == EEnemyType::Mutant)
+		{
+			++MutantCount;
+		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[PortalProtect] Starting wave %d with %d enemies (adapt %+d)"),
-		CurrentWave, EnemiesLeftToSpawn, AdaptiveCountDelta);
+	// tell HUD to flash "Wave N" (and a mutant tag when this wave rolled any)
+	if (APortalProtectGameMode* GM = GetWorld()->GetAuthGameMode<APortalProtectGameMode>())
+	{
+		GM->ShowWaveBanner(CurrentWave, MutantCount > 0);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PortalProtect] Starting wave %d with %d enemies (%d mutants, adapt %+d)"),
+		CurrentWave, EnemiesLeftToSpawn, MutantCount, AdaptiveCountDelta);
 }
 
 void AEnemySpawner::BuildWaveComposition(int32 WaveNumber)
 {
 	SpawnQueue.Reset();
+	SpawnProfileKeys.Reset();
 
 	// base count grows with wave, seed keeps mixes repeatable per wave index
 	FRandomStream Rng(WaveNumber * 9176 + 42);
@@ -196,6 +206,53 @@ void AEnemySpawner::BuildWaveComposition(int32 WaveNumber)
 	{
 		const int32 j = Rng.RandRange(0, i);
 		SpawnQueue.Swap(i, j);
+	}
+
+	InjectMutants(WaveNumber);
+}
+
+void AEnemySpawner::InjectMutants(int32 WaveNumber)
+{
+	SpawnProfileKeys.SetNum(SpawnQueue.Num());
+	for (int32 i = 0; i < SpawnQueue.Num(); ++i)
+	{
+		// stable id for this slot so a seed replays the same mutant body
+		SpawnProfileKeys[i] = WaveNumber * 1000 + i;
+	}
+
+	// waves 1-2 stay on slime / runner so the roster is learned first
+	if (WaveNumber < 3 || SpawnQueue.Num() == 0)
+	{
+		return;
+	}
+
+	// separate stream from the roster mix, so slime/runner/tank odds stay put
+	uint32 Mix = static_cast<uint32>(Terrain ? Terrain->GetSeed() : 0) * 0x9E3779B1u;
+	const uint32 WaveSalt = static_cast<uint32>(WaveNumber * 40503 + 91);
+	Mix ^= WaveSalt + 0x85EBCA77u + (Mix << 6) + (Mix >> 2);
+	FRandomStream MutantRng(static_cast<int32>(Mix));
+
+	// wave 3 is rare (~8%). later waves climb and stop at a quarter of the slots
+	const int32 Chance = FMath::Clamp(8 + (WaveNumber - 3) * 4, 0, 25);
+	const int32 Cap = FMath::Max(1, SpawnQueue.Num() / 4);
+
+	TArray<int32> Hits;
+	for (int32 i = 0; i < SpawnQueue.Num(); ++i)
+	{
+		if (MutantRng.RandRange(0, 99) < Chance)
+		{
+			Hits.Add(i);
+		}
+	}
+
+	while (Hits.Num() > Cap)
+	{
+		Hits.RemoveAt(MutantRng.RandRange(0, Hits.Num() - 1));
+	}
+
+	for (const int32 Index : Hits)
+	{
+		SpawnQueue[Index] = EEnemyType::Mutant;
 	}
 }
 
@@ -290,7 +347,12 @@ void AEnemySpawner::SpawnNextFromQueue()
 	}
 
 	const EEnemyType Type = SpawnQueue[0];
+	const int32 ProfileKey = SpawnProfileKeys.IsValidIndex(0) ? SpawnProfileKeys[0] : 0;
 	SpawnQueue.RemoveAt(0);
+	if (SpawnProfileKeys.Num() > 0)
+	{
+		SpawnProfileKeys.RemoveAt(0);
+	}
 	EnemiesLeftToSpawn = SpawnQueue.Num();
 
 	// rotate through path start points so pressure spreads across lanes
@@ -308,7 +370,15 @@ void AEnemySpawner::SpawnNextFromQueue()
 		EnemyClass, Path.Waypoints[0], FRotator::ZeroRotator, Params);
 	if (Enemy)
 	{
-		Enemy->InitializeAsType(Type);
+		if (Type == EEnemyType::Mutant)
+		{
+			const int32 TerrainSeed = Terrain ? Terrain->GetSeed() : 0;
+			Enemy->ApplyProceduralProfile(TerrainSeed, ProfileKey);
+		}
+		else
+		{
+			Enemy->InitializeAsType(Type);
+		}
 		Enemy->ApplyLateWaveHealthScale(CurrentWave);
 		Enemy->InitializeOnPath(Path.Waypoints);
 		AliveThisWave.Add(Enemy);

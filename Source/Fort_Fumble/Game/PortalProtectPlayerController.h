@@ -80,6 +80,7 @@ public:
 
 protected:
 	void OnLeftClick();
+	void OnUpgradeInteract();
 	void OnRestart();
 	bool IsGameplayInputBlocked() const;
 	bool IsEndMatchMenuOpen() const { return bGameOverMenuOpen || bVictoryMenuOpen; }

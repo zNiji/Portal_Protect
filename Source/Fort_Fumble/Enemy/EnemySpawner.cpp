@@ -179,6 +179,13 @@ void AEnemySpawner::BuildWaveComposition(int32 WaveNumber)
 		Count = FMath::Clamp(Count + AdaptiveCountDelta, 2, 28);
 	}
 
+	// later waves add a few bodies so a handful of upgraded turrets still get pushed
+	if (WaveNumber >= 6)
+	{
+		Count += (WaveNumber >= 9) ? 2 : 1;
+		Count = FMath::Clamp(Count, 2, 30);
+	}
+
 	for (int32 i = 0; i < Count; ++i)
 	{
 		SpawnQueue.Add(PickTypeForWave(WaveNumber, Rng));
@@ -302,6 +309,7 @@ void AEnemySpawner::SpawnNextFromQueue()
 	if (Enemy)
 	{
 		Enemy->InitializeAsType(Type);
+		Enemy->ApplyLateWaveHealthScale(CurrentWave);
 		Enemy->InitializeOnPath(Path.Waypoints);
 		AliveThisWave.Add(Enemy);
 	}

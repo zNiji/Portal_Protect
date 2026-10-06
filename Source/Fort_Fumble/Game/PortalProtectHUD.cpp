@@ -93,7 +93,7 @@ void APortalProtectHUD::DrawHUD()
 	};
 
 	auto DrawPanelText = [&](const TArray<TPair<FString, FLinearColor>>& Lines, UFont* Font, float Scale,
-		float AnchorX, float AnchorY, bool bRightAlign, bool bBottomAlign) -> float
+		float AnchorX, float AnchorY, bool bRightAlign, bool bBottomAlign, bool bCenterX) -> float
 	{
 		if (Lines.Num() == 0)
 		{
@@ -130,7 +130,7 @@ void APortalProtectHUD::DrawHUD()
 
 		const float PanelW = MaxW + PadX * 2.f;
 		const float PanelH = TotalH + PadY * 2.f;
-		const float PanelX = bRightAlign ? (AnchorX - PanelW) : AnchorX;
+		const float PanelX = bCenterX ? (AnchorX - PanelW * 0.5f) : (bRightAlign ? (AnchorX - PanelW) : AnchorX);
 		const float PanelY = bBottomAlign ? (AnchorY - PanelH) : AnchorY;
 
 		DrawRect(PanelBg, PanelX, PanelY, PanelW, PanelH);
@@ -168,19 +168,20 @@ void APortalProtectHUD::DrawHUD()
 	const int32 SelectedCost = GM->GetDefenderCost();
 	const FString CoinsLine = FString::Printf(TEXT("Coins: %d   |   Places left: %d"),
 		GM->GetCoinBalance(), GM->GetDefendersRemaining());
+	const FString TokenLine = FString::Printf(TEXT("Upgrade tokens: %d"), GM->GetUpgradeTokenCount());
 	const FString SelectedLine = FString::Printf(TEXT("Selected: %s (%d coins)"), *SelectedName, SelectedCost);
 	const FString CostsLine = FString::Printf(TEXT("Costs — Cannon: %d   Marksman: %d   Mortar: %d"),
 		GM->GetDefenderCostForType(EDefenderType::Cannon),
 		GM->GetDefenderCostForType(EDefenderType::Marksman),
 		GM->GetDefenderCostForType(EDefenderType::Mortar));
 	const FString ControlsLine = TEXT("1/2/3 or Q/E or wheel — pick defender");
-	const FString ControlsLine2 = TEXT("LMB place  |  WASD  |  Esc pause  |  R restart");
+	const FString ControlsLine2 = TEXT("LMB place  |  F upgrade  |  WASD  |  Esc pause  |  R restart");
 
 	// Top-left: score
 	{
 		TArray<TPair<FString, FLinearColor>> Lines;
 		Lines.Add(TPair<FString, FLinearColor>(ScoreLine, FLinearColor(1.f, 0.95f, 0.12f, 1.f)));
-		DrawPanelText(Lines, CrispScoreFont, 1.5f, Margin, Margin, false, false);
+		DrawPanelText(Lines, CrispScoreFont, 1.5f, Margin, Margin, false, false, false);
 	}
 
 	// Top-right: title + wave status
@@ -188,7 +189,7 @@ void APortalProtectHUD::DrawHUD()
 		TArray<TPair<FString, FLinearColor>> Lines;
 		Lines.Add(TPair<FString, FLinearColor>(TitleLine, FLinearColor::White));
 		Lines.Add(TPair<FString, FLinearColor>(WaveLine, FLinearColor(1.f, 0.55f, 0.35f, 1.f)));
-		DrawPanelText(Lines, BodyFont, 1.75f, ScreenW - Margin, Margin, true, false);
+		DrawPanelText(Lines, BodyFont, 1.75f, ScreenW - Margin, Margin, true, false, false);
 	}
 
 	// Bottom-left: tower HP + coins / selection
@@ -197,8 +198,9 @@ void APortalProtectHUD::DrawHUD()
 		TArray<TPair<FString, FLinearColor>> Lines;
 		Lines.Add(TPair<FString, FLinearColor>(HpLine, FLinearColor(0.6f, 0.85f, 1.f, 1.f)));
 		Lines.Add(TPair<FString, FLinearColor>(CoinsLine, FLinearColor(1.f, 0.9f, 0.3f, 1.f)));
+		Lines.Add(TPair<FString, FLinearColor>(TokenLine, FLinearColor(0.78f, 0.48f, 1.f, 1.f)));
 		Lines.Add(TPair<FString, FLinearColor>(SelectedLine, FLinearColor(1.f, 0.9f, 0.3f, 1.f)));
-		BottomLeftPanelH = DrawPanelText(Lines, BodyFont, 1.75f, Margin, ScreenH - Margin, false, true);
+		BottomLeftPanelH = DrawPanelText(Lines, BodyFont, 1.75f, Margin, ScreenH - Margin, false, true, false);
 	}
 
 	// Bottom-right: shop costs + controls
@@ -207,7 +209,61 @@ void APortalProtectHUD::DrawHUD()
 		Lines.Add(TPair<FString, FLinearColor>(CostsLine, FLinearColor(0.85f, 0.9f, 1.f, 1.f)));
 		Lines.Add(TPair<FString, FLinearColor>(ControlsLine, FLinearColor(0.92f, 0.92f, 0.78f, 1.f)));
 		Lines.Add(TPair<FString, FLinearColor>(ControlsLine2, FLinearColor(0.92f, 0.92f, 0.78f, 1.f)));
-		DrawPanelText(Lines, BodyFont, 1.6f, ScreenW - Margin, ScreenH - Margin, true, true);
+		DrawPanelText(Lines, BodyFont, 1.6f, ScreenW - Margin, ScreenH - Margin, true, true, false);
+	}
+
+	// upgrade prompt sits on the unit when it's on screen, otherwise lower-center
+	FUpgradePrompt Prompt;
+	if (GM->GetNearestUpgradePrompt(Prompt))
+	{
+		FLinearColor LevelColor = FLinearColor::White;
+		if (Prompt.Level >= 2)
+		{
+			LevelColor = FLinearColor(0.55f, 0.62f, 1.f, 1.f);
+		}
+		else if (Prompt.Level == 1)
+		{
+			LevelColor = FLinearColor(1.f, 0.82f, 0.28f, 1.f);
+		}
+		const FLinearColor ActionColor = Prompt.bCanUpgrade
+			? FLinearColor(0.45f, 1.f, 0.55f, 1.f)
+			: FLinearColor(1.f, 0.62f, 0.35f, 1.f);
+
+		TArray<TPair<FString, FLinearColor>> PromptLines;
+		PromptLines.Add(TPair<FString, FLinearColor>(Prompt.Title, FLinearColor::White));
+		PromptLines.Add(TPair<FString, FLinearColor>(Prompt.LevelLine, LevelColor));
+		if (!Prompt.HintLine.IsEmpty())
+		{
+			PromptLines.Add(TPair<FString, FLinearColor>(Prompt.HintLine, FLinearColor(0.82f, 0.9f, 1.f, 1.f)));
+		}
+		if (!Prompt.ActionLine.IsEmpty())
+		{
+			PromptLines.Add(TPair<FString, FLinearColor>(Prompt.ActionLine, ActionColor));
+		}
+
+		bool bDrewOnTarget = false;
+		if (APlayerController* PC = GetOwningPlayerController())
+		{
+			FVector CamLoc = FVector::ZeroVector;
+			FRotator CamRot = FRotator::ZeroRotator;
+			PC->GetPlayerViewPoint(CamLoc, CamRot);
+			const bool bInFront = FVector::DotProduct(CamRot.Vector(), Prompt.WorldAnchor - CamLoc) > 0.f;
+			const FVector Screen = Canvas->Project(Prompt.WorldAnchor, false);
+			const bool bOnScreen = bInFront
+				&& Screen.X >= 48.f && Screen.X <= ScreenW - 48.f
+				&& Screen.Y >= 48.f && Screen.Y <= ScreenH - 48.f;
+			if (bOnScreen)
+			{
+				const float AnchorX = FMath::Clamp(Screen.X, 180.f, ScreenW - 180.f);
+				const float AnchorY = FMath::Clamp(Screen.Y - 10.f, 120.f, ScreenH * 0.78f);
+				DrawPanelText(PromptLines, BodyFont, 1.45f, AnchorX, AnchorY, false, true, true);
+				bDrewOnTarget = true;
+			}
+		}
+		if (!bDrewOnTarget)
+		{
+			DrawPanelText(PromptLines, BodyFont, 1.55f, ScreenW * 0.5f, ScreenH * 0.62f, false, false, true);
+		}
 	}
 
 	const float CX = ScreenW * 0.5f;
@@ -221,7 +277,7 @@ void APortalProtectHUD::DrawHUD()
 	{
 		TArray<TPair<FString, FLinearColor>> Lines;
 		Lines.Add(TPair<FString, FLinearColor>(Status, FLinearColor(1.f, 0.75f, 0.35f, 1.f)));
-		DrawPanelText(Lines, BodyFont, 1.75f, Margin, ScreenH - Margin - BottomLeftPanelH - 12.f, false, true);
+		DrawPanelText(Lines, BodyFont, 1.75f, Margin, ScreenH - Margin - BottomLeftPanelH - 12.f, false, true, false);
 	}
 
 	// centered wave / win banner (GameMode owns the timer)

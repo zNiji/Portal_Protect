@@ -8,11 +8,13 @@
 #include "Tower/CentralTower.h"
 #include "Enemy/EnemySpawner.h"
 #include "Economy/CoinSpawner.h"
+#include "Economy/UpgradeTokenSpawner.h"
 #include "Defender/DefenderPlacementSpot.h"
 #include "Defender/DefenderUnit.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 
 APortalProtectGameMode::APortalProtectGameMode()
@@ -30,6 +32,7 @@ void APortalProtectGameMode::BeginPlay()
 	Super::BeginPlay();
 	DefendersRemaining = StartingDefenders;
 	CoinBalance = StartingCoins;
+	UpgradeTokenCount = 0;
 	Score = 0;
 	bGameOver = false;
 	bVictory = false;
@@ -102,6 +105,13 @@ void APortalProtectGameMode::SpawnWorld()
 	if (CoinSpawner)
 	{
 		CoinSpawner->Configure(Terrain);
+	}
+
+	TokenSpawner = World->SpawnActor<AUpgradeTokenSpawner>(
+		AUpgradeTokenSpawner::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	if (TokenSpawner)
+	{
+		TokenSpawner->Configure(Terrain);
 	}
 
 	PlacementSpots.Reset();
@@ -292,6 +302,190 @@ void APortalProtectGameMode::AddCoins(int32 Amount)
 	}
 	CoinBalance += Amount;
 	SetStatusMessage(FString::Printf(TEXT("+%d coins"), Amount), 1.2f);
+}
+
+void APortalProtectGameMode::AddUpgradeTokens(int32 Amount)
+{
+	if (Amount <= 0 || bGameOver)
+	{
+		return;
+	}
+	UpgradeTokenCount += Amount;
+	SetStatusMessage(Amount == 1
+		? FString(TEXT("+1 upgrade token"))
+		: FString::Printf(TEXT("+%d upgrade tokens"), Amount), 1.4f);
+}
+
+namespace UpgradeInteract
+{
+	// a few terrain cells — close enough to feel like walking up to the unit
+	constexpr float Radius = 450.f;
+}
+
+AActor* APortalProtectGameMode::FindNearestUpgradeTarget() const
+{
+	UWorld* World = GetWorld();
+	if (!World || bGameOver)
+	{
+		return nullptr;
+	}
+
+	APlayerController* PC = World->GetFirstPlayerController();
+	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+	if (!IsValid(Pawn))
+	{
+		return nullptr;
+	}
+
+	const FVector Origin = Pawn->GetActorLocation();
+	const float RadiusSq = UpgradeInteract::Radius * UpgradeInteract::Radius;
+	AActor* Best = nullptr;
+	float BestDist = RadiusSq;
+
+	TArray<AActor*> Defenders;
+	UGameplayStatics::GetAllActorsOfClass(World, ADefenderUnit::StaticClass(), Defenders);
+	for (AActor* Actor : Defenders)
+	{
+		ADefenderUnit* Unit = Cast<ADefenderUnit>(Actor);
+		if (!IsValid(Unit) || !Unit->IsAlive())
+		{
+			continue;
+		}
+		const float Dist = FVector::DistSquared2D(Origin, Unit->GetActorLocation());
+		if (Dist <= BestDist)
+		{
+			BestDist = Dist;
+			Best = Unit;
+		}
+	}
+
+	if (IsValid(Tower) && Tower->IsAlive())
+	{
+		const float Dist = FVector::DistSquared2D(Origin, Tower->GetActorLocation());
+		if (Dist <= BestDist)
+		{
+			BestDist = Dist;
+			Best = Tower;
+		}
+	}
+
+	return Best;
+}
+
+void APortalProtectGameMode::FillUpgradePrompt(AActor* Target, FUpgradePrompt& OutPrompt) const
+{
+	OutPrompt = FUpgradePrompt();
+	if (!IsValid(Target))
+	{
+		return;
+	}
+
+	int32 Level = 0;
+	int32 MaxLevel = 2;
+	bool bCanAccept = false;
+	FString Hint;
+	FVector Anchor = Target->GetActorLocation();
+
+	if (ADefenderUnit* Unit = Cast<ADefenderUnit>(Target))
+	{
+		OutPrompt.Title = GetDefenderDisplayName(Unit->GetDefenderType());
+		Level = Unit->GetUpgradeLevel();
+		MaxLevel = ADefenderUnit::MaxUpgradeLevel;
+		bCanAccept = Unit->CanAcceptUpgrade();
+		Hint = Unit->GetNextUpgradeHint();
+		Anchor.Z += 150.f;
+	}
+	else if (ACentralTower* Central = Cast<ACentralTower>(Target))
+	{
+		OutPrompt.Title = TEXT("Tower");
+		Level = Central->GetUpgradeLevel();
+		MaxLevel = ACentralTower::MaxUpgradeLevel;
+		bCanAccept = Central->CanAcceptUpgrade();
+		Hint = Central->GetNextUpgradeHint();
+		Anchor.Z += 220.f;
+	}
+	else
+	{
+		return;
+	}
+
+	OutPrompt.bValid = true;
+	OutPrompt.Level = Level;
+	OutPrompt.LevelLine = FString::Printf(TEXT("Lv %d / %d"), Level, MaxLevel);
+	OutPrompt.WorldAnchor = Anchor;
+
+	if (!bCanAccept)
+	{
+		OutPrompt.bCanUpgrade = false;
+		OutPrompt.HintLine = TEXT("No further upgrades");
+		OutPrompt.ActionLine = TEXT("Already max level");
+		return;
+	}
+
+	OutPrompt.HintLine = FString::Printf(TEXT("Next: %s"), *Hint);
+	if (UpgradeTokenCount <= 0)
+	{
+		OutPrompt.bCanUpgrade = false;
+		OutPrompt.ActionLine = TEXT("Need an upgrade token");
+		return;
+	}
+
+	OutPrompt.bCanUpgrade = true;
+	OutPrompt.ActionLine = TEXT("Press F to upgrade");
+}
+
+bool APortalProtectGameMode::GetNearestUpgradePrompt(FUpgradePrompt& OutPrompt) const
+{
+	OutPrompt = FUpgradePrompt();
+	AActor* Target = FindNearestUpgradeTarget();
+	if (!Target)
+	{
+		return false;
+	}
+	FillUpgradePrompt(Target, OutPrompt);
+	return OutPrompt.bValid;
+}
+
+bool APortalProtectGameMode::TryUpgradeNearestTarget()
+{
+	if (bGameOver)
+	{
+		return false;
+	}
+
+	AActor* Target = FindNearestUpgradeTarget();
+	if (!Target)
+	{
+		SetStatusMessage(TEXT("Move closer to a defender or the tower."), 1.3f);
+		return false;
+	}
+
+	FUpgradePrompt Prompt;
+	FillUpgradePrompt(Target, Prompt);
+	if (!Prompt.bCanUpgrade)
+	{
+		SetStatusMessage(Prompt.ActionLine, 1.4f);
+		return false;
+	}
+
+	bool bApplied = false;
+	if (ADefenderUnit* Unit = Cast<ADefenderUnit>(Target))
+	{
+		bApplied = Unit->ApplyNextUpgrade();
+	}
+	else if (ACentralTower* Central = Cast<ACentralTower>(Target))
+	{
+		bApplied = Central->ApplyNextUpgrade();
+	}
+
+	if (!bApplied)
+	{
+		return false;
+	}
+
+	UpgradeTokenCount = FMath::Max(0, UpgradeTokenCount - 1);
+	SetStatusMessage(FString::Printf(TEXT("%s upgraded to Lv %d."), *Prompt.Title, Prompt.Level + 1), 1.6f);
+	return true;
 }
 
 void APortalProtectGameMode::AddScore(int32 Amount)

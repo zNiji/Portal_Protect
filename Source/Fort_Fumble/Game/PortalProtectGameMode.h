@@ -25,6 +25,10 @@ class ADefenderPlacementSpot;
 
 class ACoinSpawner;
 
+class AUpgradeTokenSpawner;
+
+struct FUpgradePrompt;
+
 
 
 UCLASS()
@@ -97,6 +101,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PortalProtect")
 
 	void AddCoins(int32 Amount);
+
+	UFUNCTION(BlueprintPure, Category = "PortalProtect|Upgrade")
+	int32 GetUpgradeTokenCount() const { return UpgradeTokenCount; }
+
+	UFUNCTION(BlueprintCallable, Category = "PortalProtect|Upgrade")
+	void AddUpgradeTokens(int32 Amount);
+
+	// F while standing near a defender or the tower. spends one token on success
+	UFUNCTION(BlueprintCallable, Category = "PortalProtect|Upgrade")
+	bool TryUpgradeNearestTarget();
+
+	// nearest living defender or tower inside the interact radius. false if none
+	bool GetNearestUpgradePrompt(FUpgradePrompt& OutPrompt) const;
 
 
 
@@ -239,6 +256,10 @@ protected:
 
 	void ClearStatusMessage();
 
+	AActor* FindNearestUpgradeTarget() const;
+
+	void FillUpgradePrompt(AActor* Target, FUpgradePrompt& OutPrompt) const;
+
 	// drip survival points once a second until game over
 
 	void TickSurvivalScore();
@@ -267,6 +288,10 @@ protected:
 
 	TObjectPtr<ACoinSpawner> CoinSpawner;
 
+	UPROPERTY()
+
+	TObjectPtr<AUpgradeTokenSpawner> TokenSpawner;
+
 
 
 	UPROPERTY()
@@ -286,6 +311,8 @@ protected:
 	int32 DefendersRemaining = 16;
 
 	int32 CoinBalance = 25;
+
+	int32 UpgradeTokenCount = 0;
 
 	bool bGameOver = false;
 

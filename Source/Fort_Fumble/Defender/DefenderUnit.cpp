@@ -2,10 +2,12 @@
 
 #include "Defender/DefenderUnit.h"
 #include "Defender/DefenderPlacementSpot.h"
+#include "Core/UpgradeVisuals.h"
 #include "Enemy/EnemyUnit.h"
 #include "Game/PortalProtectGameMode.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
@@ -29,6 +31,14 @@ ADefenderUnit::ADefenderUnit()
 	Mesh->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
 	Mesh->SetGenerateOverlapEvents(true);
 
+	UpgradeRing = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("UpgradeRing"));
+	UpgradeRing->SetupAttachment(Root);
+	UpgradeRing->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	UpgradeRing->SetCastShadow(false);
+	UpgradeRing->SetVisibility(false);
+	UpgradeRing->SetHiddenInGame(true);
+	UpgradeRing->SetMobility(EComponentMobility::Movable);
+
 	// ctor-only soft refs so CDO has a cannon mesh before InitializeAsType runs
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CannonAsset(
 		TEXT("/Game/cartoon_cannon_low_poly__extracted/source/CannonSketchfab.CannonSketchfab"));
@@ -48,7 +58,9 @@ void ADefenderUnit::BeginPlay()
 		InitializeAsType(DefenderType);
 	}
 	Health = MaxHealth;
+	EnsureUpgradeRing();
 	RefreshColor();
+	UpdateUpgradeAccent();
 }
 
 void ADefenderUnit::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -140,6 +152,8 @@ void ADefenderUnit::SetupMeshForType()
 		Mesh->SetRelativeRotation(FRotator(0.f, RelYaw, 0.f));
 		// seats mesh on pad after scale — used by spawn placement
 		PivotToGroundOffset = (Bounds.BoxExtent.Z - Bounds.Origin.Z) * BaseMeshScale * FallbackScaleMul.Z;
+		MeshLocalMinZ = Bounds.Origin.Z - Bounds.BoxExtent.Z;
+		FootprintDiameter = TargetFootprint;
 
 		UE_LOG(LogTemp, Log,
 			TEXT("[PortalProtect] Mesh bounds BoxExtent=(%.2f,%.2f,%.2f) OriginZ=%.2f footprint=%.2f scale=%.2f pivotOff=%.2f"),
@@ -348,6 +362,11 @@ void ADefenderUnit::Tick(float DeltaTime)
 	}
 
 	UpdateAim(DeltaTime);
+
+	if (UpgradeLevel > 0 && IsValid(UpgradeRing))
+	{
+		UpgradeRing->AddLocalRotation(FRotator(0.f, 40.f * DeltaTime, 0.f));
+	}
 
 	AttackTimer -= DeltaTime;
 	if (AttackTimer <= 0.f)
@@ -603,13 +622,139 @@ void ADefenderUnit::RefreshColor()
 	}
 
 	const float Ratio = MaxHealth > 0.f ? Health / MaxHealth : 0.f;
-	const float ScaleMul = FMath::Lerp(0.92f, 1.f, Ratio);
-	if (bUsingCannonMesh)
+	const float HealthMul = FMath::Lerp(0.92f, 1.f, Ratio);
+	const float VisualMul = HealthMul * UpgradeVisualScale;
+	const FVector BaseVec = bUsingCannonMesh ? FVector(BaseMeshScale) : (FallbackScaleMul * BaseMeshScale);
+	Mesh->SetRelativeScale3D(BaseVec * VisualMul);
+
+	// grow upward from the pad instead of sinking the extra scale into the ground
+	const float BaseZ = BaseVec.Z;
+	const float NewZ = BaseZ * VisualMul;
+	Mesh->SetRelativeLocation(FVector(0.f, 0.f, MeshLocalMinZ * (BaseZ - NewZ)));
+}
+
+namespace DefenderUpgradeStats
+{
+	// percents here must match GetNextUpgradeHint
+	constexpr float HealthMul = 1.30f;          // +30% max health, heal by the gain
+	constexpr float CannonDamageMul = 1.22f;    // +22% damage
+	constexpr float CannonCooldownMul = 0.95f;  // small fire-rate bump, damage is the cannon identity
+	constexpr float MarksmanDamageMul = 1.10f;  // modest, fire rate is the marksman identity
+	constexpr float MarksmanCooldownMul = 0.80f; // +25% fire rate (1/0.80)
+	constexpr float MortarDamageMul = 1.15f;
+	constexpr float MortarSplashDamageMul = 1.25f; // +25% splash
+	constexpr float MortarSplashRadiusMul = 1.12f;
+	constexpr float MortarCooldownMul = 0.95f;
+}
+
+FString ADefenderUnit::GetNextUpgradeHint() const
+{
+	if (UpgradeLevel >= MaxUpgradeLevel)
 	{
-		Mesh->SetRelativeScale3D(FVector(BaseMeshScale * ScaleMul));
+		return FString();
 	}
-	else
+
+	switch (DefenderType)
 	{
-		Mesh->SetRelativeScale3D(FallbackScaleMul * (BaseMeshScale * ScaleMul));
+	case EDefenderType::Marksman:
+		return TEXT("+30% health, +25% fire rate");
+	case EDefenderType::Mortar:
+		return TEXT("+30% health, +25% splash");
+	case EDefenderType::Cannon:
+	default:
+		return TEXT("+30% health, +22% damage");
 	}
+}
+
+bool ADefenderUnit::ApplyNextUpgrade()
+{
+	if (!IsAlive() || UpgradeLevel >= MaxUpgradeLevel)
+	{
+		return false;
+	}
+
+	const float OldMax = MaxHealth;
+	MaxHealth *= DefenderUpgradeStats::HealthMul;
+	const float Gained = MaxHealth - OldMax;
+	Health = FMath::Min(MaxHealth, Health + Gained);
+
+	switch (DefenderType)
+	{
+	case EDefenderType::Cannon:
+		AttackDamage *= DefenderUpgradeStats::CannonDamageMul;
+		AttackCooldown = FMath::Max(0.15f, AttackCooldown * DefenderUpgradeStats::CannonCooldownMul);
+		break;
+	case EDefenderType::Marksman:
+		AttackDamage *= DefenderUpgradeStats::MarksmanDamageMul;
+		AttackCooldown = FMath::Max(0.2f, AttackCooldown * DefenderUpgradeStats::MarksmanCooldownMul);
+		break;
+	case EDefenderType::Mortar:
+		AttackDamage *= DefenderUpgradeStats::MortarDamageMul;
+		SplashDamage *= DefenderUpgradeStats::MortarSplashDamageMul;
+		SplashRadius *= DefenderUpgradeStats::MortarSplashRadiusMul;
+		AttackCooldown = FMath::Max(0.2f, AttackCooldown * DefenderUpgradeStats::MortarCooldownMul);
+		break;
+	default:
+		break;
+	}
+
+	++UpgradeLevel;
+	UpgradeVisualScale = UpgradeVisual::ScaleForLevel(UpgradeLevel);
+	RefreshColor();
+	UpdateUpgradeAccent();
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[PortalProtect] %s upgraded to Lv %d (HP %.0f/%.0f dmg %.1f cd %.2f splash %.1f r %.0f)"),
+		DefenderType == EDefenderType::Marksman ? TEXT("Marksman")
+			: (DefenderType == EDefenderType::Mortar ? TEXT("Mortar") : TEXT("Cannon")),
+		UpgradeLevel, Health, MaxHealth, AttackDamage, AttackCooldown, SplashDamage, SplashRadius);
+	return true;
+}
+
+void ADefenderUnit::EnsureUpgradeRing()
+{
+	if (!IsValid(UpgradeRing) || bUpgradeRingBuilt)
+	{
+		return;
+	}
+
+	UpgradeVisual::BuildFlatTorus(UpgradeRing);
+	bUpgradeRingBuilt = true;
+}
+
+void ADefenderUnit::UpdateUpgradeAccent()
+{
+	EnsureUpgradeRing();
+	if (!IsValid(UpgradeRing))
+	{
+		return;
+	}
+
+	if (UpgradeLevel <= 0)
+	{
+		UpgradeRing->SetVisibility(false);
+		UpgradeRing->SetHiddenInGame(true);
+		return;
+	}
+
+	const FLinearColor Color = UpgradeVisual::AccentForLevel(UpgradeLevel);
+	if (!AccentMID)
+	{
+		AccentMID = UpgradeVisual::MakeAccentMaterial(this, Color);
+	}
+	if (AccentMID)
+	{
+		AccentMID->SetVectorParameterValue(TEXT("Color"), Color);
+		// level 2 pushes the emissive harder so it doesn't just look like a recolor of level 1
+		AccentMID->SetVectorParameterValue(TEXT("EmissiveColor"), Color * (UpgradeLevel >= 2 ? 5.f : 2.5f));
+		UpgradeRing->SetMaterial(0, AccentMID);
+	}
+
+	const float RadiusMul = (UpgradeLevel >= 2) ? 0.70f : 0.56f;
+	const float Radius = FMath::Max(FootprintDiameter * RadiusMul, 72.f);
+	const float Uniform = Radius / UpgradeVisual::TorusMajorRadius;
+	UpgradeRing->SetRelativeScale3D(FVector(Uniform));
+	UpgradeRing->SetRelativeLocation(FVector(0.f, 0.f, -PivotToGroundOffset + 12.f));
+	UpgradeRing->SetHiddenInGame(false);
+	UpgradeRing->SetVisibility(true);
 }

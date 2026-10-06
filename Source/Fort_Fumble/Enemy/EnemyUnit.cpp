@@ -194,6 +194,20 @@ void AEnemyUnit::InitializeAsType(EEnemyType InType)
 		static_cast<int32>(EnemyType), MaxHealth, MoveSpeed, bUsesProjectile ? 1 : 0);
 }
 
+void AEnemyUnit::ApplyLateWaveHealthScale(int32 WaveNumber)
+{
+	// leave the early waves alone — upgrade tokens are rare, so pressure starts once they can stack
+	if (WaveNumber < 5 || MaxHealth <= 0.f)
+	{
+		return;
+	}
+
+	const float HpMul = FMath::Clamp(1.f + 0.06f * static_cast<float>(WaveNumber - 4), 1.f, 1.36f);
+	MaxHealth *= HpMul;
+	Health = MaxHealth;
+	UpdateHealthBar();
+}
+
 void AEnemyUnit::ApplyMeshSetup(USkeletalMesh* InMesh, UAnimSequence* InIdle, UAnimSequence* InWalk)
 {
 	if (!InMesh || !Mesh)

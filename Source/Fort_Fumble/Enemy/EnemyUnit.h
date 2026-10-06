@@ -30,6 +30,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
 	void InitializeAsType(EEnemyType InType);
 
+	// waves 1-4 stay at base HP. later waves soak a bit more so upgrades don't erase them
+	UFUNCTION(BlueprintCallable, Category = "Enemy")
+	void ApplyLateWaveHealthScale(int32 WaveNumber);
+
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
 	void InitializeOnPath(const TArray<FVector>& InWaypoints);
 

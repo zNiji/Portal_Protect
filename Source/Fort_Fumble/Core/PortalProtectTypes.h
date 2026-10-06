@@ -47,3 +47,16 @@ struct FDefenderSlotData
 	UPROPERTY(BlueprintReadOnly)
 	bool bOccupied = false;
 };
+
+// proximity upgrade popup — filled by the game mode, drawn by the HUD
+struct FUpgradePrompt
+{
+	bool bValid = false;
+	FString Title;
+	FString LevelLine;
+	FString HintLine;
+	FString ActionLine;
+	int32 Level = 0;
+	bool bCanUpgrade = false;
+	FVector WorldAnchor = FVector::ZeroVector;
+};

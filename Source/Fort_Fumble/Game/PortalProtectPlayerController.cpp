@@ -73,6 +73,7 @@ void APortalProtectPlayerController::SetupInputComponent()
 	if (InputComponent)
 	{
 		InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &APortalProtectPlayerController::OnLeftClick);
+		InputComponent->BindKey(EKeys::F, IE_Pressed, this, &APortalProtectPlayerController::OnUpgradeInteract);
 
 		FInputKeyBinding& RestartBinding = InputComponent->BindKey(
 			EKeys::R, IE_Pressed, this, &APortalProtectPlayerController::OnRestart);
@@ -97,7 +98,7 @@ void APortalProtectPlayerController::SetupInputComponent()
 		InputComponent->BindKey(EKeys::E, IE_Pressed, this, &APortalProtectPlayerController::CycleDefenderNext);
 		InputComponent->BindKey(EKeys::MouseScrollUp, IE_Pressed, this, &APortalProtectPlayerController::CycleDefenderNext);
 		InputComponent->BindKey(EKeys::MouseScrollDown, IE_Pressed, this, &APortalProtectPlayerController::CycleDefenderPrev);
-		UE_LOG(LogTemp, Log, TEXT("[PortalProtect] Defender type keys bound (1/2/3, numpad, Q/E, wheel)."));
+		UE_LOG(LogTemp, Log, TEXT("[PortalProtect] Defender type keys bound (1/2/3, numpad, Q/E, wheel). F upgrades."));
 	}
 }
 
@@ -206,6 +207,22 @@ ADefenderPlacementSpot* APortalProtectPlayerController::TracePlacementSpot() con
 		return nullptr;
 	}
 	return Cast<ADefenderPlacementSpot>(Hit.GetActor());
+}
+
+void APortalProtectPlayerController::OnUpgradeInteract()
+{
+	if (IsGameplayInputBlocked())
+	{
+		return;
+	}
+
+	APortalProtectGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<APortalProtectGameMode>() : nullptr;
+	if (!GM || GM->IsGameOver())
+	{
+		return;
+	}
+
+	GM->TryUpgradeNearestTarget();
 }
 
 void APortalProtectPlayerController::OnLeftClick()

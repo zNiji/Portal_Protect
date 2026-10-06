@@ -114,8 +114,10 @@ void ADefenderUnit::InitializeAsType(EDefenderType InType)
 		AttackCooldown = 1.8f;
 		AimMaxPitch = 55.f;
 		AimInterpSpeed = 5.f;
-		SplashRadius = 240.f;
-		SplashDamage = 8.f;
+		// was 240 / 8. direct hit stays 12; splash matches it so neighbors aren't a token tick
+		// radius covers a few body widths plus the usual gap to the next slime on the path
+		SplashRadius = 480.f;
+		SplashDamage = 12.f;
 		break;
 	default:
 		break;
@@ -455,6 +457,7 @@ void ADefenderUnit::TryAttack()
 
 	Target->ApplyDamage(AttackDamage);
 
+	// mortar only. cannon and marksman stay single-target. primary already took AttackDamage
 	if (DefenderType == EDefenderType::Mortar && SplashRadius > 0.f && SplashDamage > 0.f)
 	{
 		ApplySplashAt(HitLoc, PrimaryWeak.Get());
@@ -490,13 +493,13 @@ void ADefenderUnit::ApplySplashAt(const FVector& Center, AEnemyUnit* PrimaryTarg
 		return;
 	}
 
-	// gather first — ApplyDamage may Destroy mid-combat and must not mutate while we walk the live query
+	// distance against living enemies, not a sphere trace. enemy capsules are ECC_Pawn,
+	// so a WorldStatic/WorldDynamic overlap would miss everyone except the aimed target
 	TArray<AActor*> Found;
 	UGameplayStatics::GetAllActorsOfClass(World, AEnemyUnit::StaticClass(), Found);
 
 	TArray<TWeakObjectPtr<AEnemyUnit>> SplashTargets;
 	SplashTargets.Reserve(Found.Num());
-	const float RadiusSq = SplashRadius * SplashRadius;
 
 	for (AActor* Actor : Found)
 	{
@@ -509,7 +512,9 @@ void ADefenderUnit::ApplySplashAt(const FVector& Center, AEnemyUnit* PrimaryTarg
 		{
 			continue;
 		}
-		if (FVector::DistSquared2D(Center, Enemy->GetActorLocation()) <= RadiusSq)
+		// center distance plus the enemy sphere, so a body overlapping the blast still counts
+		const float Reach = SplashRadius + FMath::Max(0.f, Enemy->GetSimpleCollisionRadius());
+		if (FVector::DistSquared2D(Center, Enemy->GetActorLocation()) <= Reach * Reach)
 		{
 			SplashTargets.Add(Enemy);
 		}

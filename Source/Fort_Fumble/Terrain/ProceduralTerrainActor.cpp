@@ -4,6 +4,7 @@
 #include "Terrain/ProceduralTerrainActor.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -112,8 +113,9 @@ void AProceduralTerrainActor::GenerateTerrain()
 	TowerWorldLocation = GridToWorld(CenterX, CenterY, Heights[Index(CenterX, CenterY)]);
 	TowerWorldLocation.Z += 20.f;
 
-	SpawnEnvironmentDressing();
+	// rim rocks first so trees and pickups can stay clear of them
 	SpawnMapBorder();
+	SpawnEnvironmentDressing();
 
 	UE_LOG(LogTemp, Warning, TEXT("[PortalProtect] Terrain generated with seed %d — %d paths, %d defender slots, %d dressing props, border walls on."),
 		Seed, Paths.Num(), DefenderSlots.Num(), DressingComponents.Num());
@@ -273,7 +275,7 @@ bool AProceduralTerrainActor::TryGetRandomOffPathLocation(FVector& OutLocation, 
 		return false;
 	}
 
-	// shuffle then walk - skip cells sitting inside trees/rocks
+	// shuffle then walk - skip cells inside a tree/rock footprint
 	for (int32 I = Candidates.Num() - 1; I > 0; --I)
 	{
 		Candidates.Swap(I, FMath::RandRange(0, I));
@@ -308,20 +310,36 @@ bool AProceduralTerrainActor::IsNearDefenderSlot(const FVector& WorldLoc) const
 
 bool AProceduralTerrainActor::IsNearDressing(const FVector& WorldLoc) const
 {
-	const float Clearance = FMath::Max(50.f, CoinDressingClearance);
-	const float MinDistSq = Clearance * Clearance;
-	for (const UStaticMeshComponent* Comp : DressingComponents)
+	// coin sphere is ~48, token ~56 — stay that far past the mesh, and never closer than CoinDressingClearance
+	const float SurfaceMargin = 80.f;
+	for (const FDressingFootprint& Footprint : DressingFootprints)
 	{
-		if (!Comp)
-		{
-			continue;
-		}
-		if (FVector::DistSquared2D(WorldLoc, Comp->GetComponentLocation()) < MinDistSq)
+		const float Clearance = FMath::Max(Footprint.Radius + SurfaceMargin, CoinDressingClearance);
+		if (FVector::DistSquared2D(WorldLoc, Footprint.Center) < Clearance * Clearance)
 		{
 			return true;
 		}
 	}
 	return false;
+}
+
+void AProceduralTerrainActor::RememberDressingFootprint(const UStaticMeshComponent* Comp)
+{
+	if (!Comp)
+	{
+		return;
+	}
+
+	const FBoxSphereBounds WorldBounds = Comp->CalcBounds(Comp->GetComponentTransform());
+	FDressingFootprint Footprint;
+	Footprint.Center = WorldBounds.Origin;
+	Footprint.Radius = FMath::Max(WorldBounds.BoxExtent.X, WorldBounds.BoxExtent.Y);
+	if (Footprint.Radius < 1.f)
+	{
+		Footprint.Center = Comp->GetComponentLocation();
+		Footprint.Radius = FMath::Max(50.f, CoinDressingClearance);
+	}
+	DressingFootprints.Add(Footprint);
 }
 
 void AProceduralTerrainActor::ClearEnvironmentDressing()
@@ -334,6 +352,7 @@ void AProceduralTerrainActor::ClearEnvironmentDressing()
 		}
 	}
 	DressingComponents.Reset();
+	DressingFootprints.Reset();
 }
 
 void AProceduralTerrainActor::ClearMapBorder()
@@ -453,6 +472,7 @@ void AProceduralTerrainActor::SpawnMapBorder()
 		Comp->SetCastShadow(true);
 		Comp->RegisterComponent();
 		BorderWallComponents.Add(Comp);
+		RememberDressingFootprint(Comp);
 	};
 
 	const float RockRim = Half + Thickness * 0.15f;
@@ -517,18 +537,55 @@ void AProceduralTerrainActor::SpawnEnvironmentDressing()
 		Candidates.Swap(I, J);
 	}
 
-	auto SpawnProp = [this, &Stream](UStaticMesh* Mesh, const FIntPoint& Cell, float ScaleMin, float ScaleMax)
+	// circle around the pivot that covers the mesh at this scale, before yaw is known
+	auto PivotRadius = [](const UStaticMesh* Mesh, float Scale) -> float
 	{
 		if (!Mesh)
 		{
-			return;
+			return 80.f * FMath::Max(Scale, 0.01f);
+		}
+		const FBoxSphereBounds LocalBounds = Mesh->GetBounds();
+		const float HalfExtent = FMath::Max(LocalBounds.BoxExtent.X, LocalBounds.BoxExtent.Y);
+		const float PivotOffset = FVector2D(LocalBounds.Origin.X, LocalBounds.Origin.Y).Size();
+		return (HalfExtent + PivotOffset) * FMath::Max(Scale, 0.01f);
+	};
+
+	// gap between surfaces so a canopy or boulder doesn't sit inside the other mesh
+	constexpr float PropMargin = 70.f;
+
+	auto HitsPlacedProp = [this, PropMargin](const FVector& Pivot, float Radius) -> bool
+	{
+		for (const FDressingFootprint& Footprint : DressingFootprints)
+		{
+			const float Need = Footprint.Radius + Radius + PropMargin;
+			if (FVector::DistSquared2D(Pivot, Footprint.Center) < Need * Need)
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
+	auto SpawnProp = [this, &Stream, &PivotRadius, &HitsPlacedProp](UStaticMesh* Mesh, const FIntPoint& Cell, float ScaleMin, float ScaleMax) -> bool
+	{
+		if (!Mesh)
+		{
+			return false;
+		}
+
+		const float Scale = Stream.FRandRange(ScaleMin, ScaleMax);
+		const float Yaw = Stream.FRandRange(0.f, 360.f);
+		const FVector World = GridToWorld(Cell.X, Cell.Y, Heights[Index(Cell.X, Cell.Y)]);
+		if (HitsPlacedProp(World, PivotRadius(Mesh, Scale)))
+		{
+			return false;
 		}
 
 		const FName CompName = *FString::Printf(TEXT("Dressing_%d"), DressingComponents.Num());
 		UStaticMeshComponent* Comp = NewObject<UStaticMeshComponent>(this, CompName);
 		if (!Comp)
 		{
-			return;
+			return false;
 		}
 
 		Comp->SetMobility(EComponentMobility::Movable);
@@ -546,32 +603,50 @@ void AProceduralTerrainActor::SpawnEnvironmentDressing()
 		Comp->SetGenerateOverlapEvents(false);
 		Comp->SetCastShadow(true);
 
-		const FVector World = GridToWorld(Cell.X, Cell.Y, Heights[Index(Cell.X, Cell.Y)]);
 		const FVector Local = World - GetActorLocation();
 		Comp->SetRelativeLocation(Local);
-		Comp->SetRelativeRotation(FRotator(0.f, Stream.FRandRange(0.f, 360.f), 0.f));
-		const float Scale = Stream.FRandRange(ScaleMin, ScaleMax);
+		Comp->SetRelativeRotation(FRotator(0.f, Yaw, 0.f));
 		Comp->SetRelativeScale3D(FVector(Scale));
 
 		Comp->RegisterComponent();
 		DressingComponents.Add(Comp);
+		RememberDressingFootprint(Comp);
+		return true;
 	};
 
-	int32 Cursor = 0;
-	const int32 TreeCount = FMath::Min(NumTrees, Candidates.Num());
-	for (int32 I = 0; I < TreeCount; ++I, ++Cursor)
-	{
-		SpawnProp(TreeMesh, Candidates[Cursor], 0.85f, 1.35f);
-	}
+	// rocks first, then trees — a tree can reject cells that land on a rock footprint
+	TArray<uint8> UsedCells;
+	UsedCells.SetNumZeroed(Candidates.Num());
 
-	const int32 RockBudget = FMath::Min(NumRocks, Candidates.Num() - Cursor);
-	for (int32 I = 0; I < RockBudget; ++I, ++Cursor)
+	int32 RocksPlaced = 0;
+	for (int32 Index = 0; Index < Candidates.Num() && RocksPlaced < NumRocks; ++Index)
 	{
 		UStaticMesh* Rock = RockMeshes.Num() > 0
 			? RockMeshes[Stream.RandRange(0, RockMeshes.Num() - 1)].Get()
 			: nullptr;
-		SpawnProp(Rock, Candidates[Cursor], 0.55f, 1.25f);
+		if (SpawnProp(Rock, Candidates[Index], 0.55f, 1.25f))
+		{
+			UsedCells[Index] = 1;
+			++RocksPlaced;
+		}
 	}
+
+	int32 TreesPlaced = 0;
+	for (int32 Index = 0; Index < Candidates.Num() && TreesPlaced < NumTrees; ++Index)
+	{
+		if (UsedCells[Index])
+		{
+			continue;
+		}
+		if (SpawnProp(TreeMesh, Candidates[Index], 0.85f, 1.35f))
+		{
+			UsedCells[Index] = 1;
+			++TreesPlaced;
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PortalProtect] Dressing placed %d/%d rocks, %d/%d trees (overlap skips kept)."),
+		RocksPlaced, NumRocks, TreesPlaced, NumTrees);
 }
 
 // carve winding paths from map edges to center - enemies follow the waypoint lists

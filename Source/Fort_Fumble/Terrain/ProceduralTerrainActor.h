@@ -98,7 +98,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Terrain|Dressing", meta = (ClampMin = "200"))
 	float DressingTowerClearanceRadius = 1100.f;
 
-	// keep coins (and other off-path picks) clear of trees/rocks
+	// minimum gap from a prop bounds center. real clearance is at least the mesh radius plus a margin
 	UPROPERTY(EditAnywhere, Category = "Terrain|Dressing", meta = (ClampMin = "50"))
 	float CoinDressingClearance = 180.f;
 
@@ -129,8 +129,9 @@ private:
 	void ClearMapBorder();
 	void SpawnMapBorder();
 	bool IsNearDefenderSlot(const FVector& WorldLoc) const;
-	// too close to a tree/rock component
+	// too close to a tree/rock footprint (bounds radius + margin, not just the pivot)
 	bool IsNearDressing(const FVector& WorldLoc) const;
+	void RememberDressingFootprint(const UStaticMeshComponent* Comp);
 	// path cell or within Radius cells of one (chebyshev)
 	bool IsOnOrNearPath(int32 X, int32 Y, int32 Radius) const;
 	// how far along a path this cell is - 0 spawn, 1 tower, false if nothing close
@@ -149,6 +150,14 @@ private:
 
 	UPROPERTY()
 	TArray<TObjectPtr<UStaticMeshComponent>> DressingComponents;
+
+	// horizontal footprints for dressing and rim rocks — center is bounds origin, radius is XY extent
+	struct FDressingFootprint
+	{
+		FVector Center = FVector::ZeroVector;
+		float Radius = 0.f;
+	};
+	TArray<FDressingFootprint> DressingFootprints;
 
 	// rim walls so the player can't walk off the map
 	UPROPERTY()

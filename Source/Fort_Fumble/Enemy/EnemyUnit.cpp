@@ -15,7 +15,14 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
+#if WITH_EDITOR
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionSubstrate.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#endif
 
 AEnemyUnit::AEnemyUnit()
 {
@@ -296,18 +303,19 @@ void AEnemyUnit::ApplyProceduralProfile(int32 TerrainSeed, int32 SpawnIndex)
 	const float BodyScale = Rng.FRandRange(0.75f, 1.45f);
 	const float ScaleT = FMath::Clamp((BodyScale - 0.75f) / 0.70f, 0.f, 1.f);
 
+	// hue still rolls warmth (and damage). sat/val stay in the stream so the mesh pick doesn't shift
 	const float Hue = Rng.FRand();
-	const float Sat = Rng.FRandRange(0.72f, 1.f);
-	const float Val = Rng.FRandRange(0.62f, 1.f);
-	const FLinearColor Tint = FLinearColor::MakeFromHSV8(
-		static_cast<uint8>(Hue * 255.f),
-		static_cast<uint8>(Sat * 255.f),
-		static_cast<uint8>(Val * 255.f));
+	Rng.FRandRange(0.72f, 1.f);
+	Rng.FRandRange(0.62f, 1.f);
 
 	// 1 on red/orange, 0 on the opposite side of the wheel (cyan)
 	const float HueDeg = Hue * 360.f;
 	const float WarmDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(HueDeg, 18.f));
 	const float Warmth = 1.f - FMath::Clamp(WarmDelta / 180.f, 0.f, 1.f);
+	// visible wash follows warmth only. mid is the blend, not a second random hue
+	const FLinearColor CoolWash(0.15f, 0.78f, 1.f);
+	const FLinearColor WarmWash(1.f, 0.30f, 0.06f);
+	const FLinearColor Tint = FMath::Lerp(CoolWash, WarmWash, Warmth);
 
 	// bigger = tougher and slower, smaller = fragile and quick. warmth = hit strength
 	// bands sit between runner and tank so a mutant is a threat, not a wipe or a free kill
@@ -347,12 +355,13 @@ void AEnemyUnit::ApplyProceduralProfile(int32 TerrainSeed, int32 SpawnIndex)
 	if (bLoaded)
 	{
 		ApplyMeshSetup(NewMesh, NewIdle, NewWalk);
-		ApplyForcedTint(Tint);
+		// keep the rolled mesh's textures. warmth is a wash on top, not a flat replace
+		ApplyTextureSafeTint();
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[PortalProtect] Mutant has no mesh. Stats still applied."));
-		ApplyTint();
+		ApplyTextureSafeTint();
 	}
 
 	Health = MaxHealth;
@@ -428,6 +437,9 @@ void AEnemyUnit::ApplyTint()
 		return;
 	}
 
+	// solid param tint is for the roster. mutants use the overlay path instead
+	Mesh->SetOverlayMaterial(nullptr);
+
 	const int32 MatCount = Mesh->GetNumMaterials();
 	for (int32 i = 0; i < MatCount; ++i)
 	{
@@ -441,38 +453,158 @@ void AEnemyUnit::ApplyTint()
 	}
 }
 
-void AEnemyUnit::ApplyForcedTint(const FLinearColor& Tint)
+// translucent unlit wash. pack materials have no color pin, so this sits on top of the texture
+static UMaterialInterface* GetMutantWarmthOverlayParent()
 {
-	MeshTint = Tint;
+#if WITH_EDITOR
+	static TObjectPtr<UMaterial> Cached = nullptr;
+	if (Cached)
+	{
+		return Cached;
+	}
+
+	UMaterial* Mat = NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient);
+	Mat->MaterialDomain = MD_Surface;
+	Mat->BlendMode = BLEND_Translucent;
+	Mat->SetShadingModel(MSM_Unlit);
+	Mat->TwoSided = 1;
+	Mat->bIsThinSurface = 1;
+	Mat->SetUsageByFlag(MATUSAGE_SkeletalMesh, true);
+
+	UMaterialExpressionVectorParameter* Color = NewObject<UMaterialExpressionVectorParameter>(Mat);
+	Color->ParameterName = TEXT("TintColor");
+	Color->DefaultValue = FLinearColor(1.f, 0.3f, 0.06f);
+	Color->ExpressionGUID = FGuid::NewGuid();
+	Color->Material = Mat;
+
+	UMaterialExpressionScalarParameter* Opacity = NewObject<UMaterialExpressionScalarParameter>(Mat);
+	Opacity->ParameterName = TEXT("Opacity");
+	Opacity->DefaultValue = 0.34f;
+	Opacity->ExpressionGUID = FGuid::NewGuid();
+	Opacity->Material = Mat;
+
+	UMaterialExpressionSubstrateShadingModels* Shading = NewObject<UMaterialExpressionSubstrateShadingModels>(Mat);
+	Shading->Material = Mat;
+	Shading->ShadingModelOverride = MSM_Unlit;
+	Shading->EmissiveColor.Connect(0, Color);
+	Shading->BaseColor.Connect(0, Color);
+	Shading->Opacity.Connect(0, Opacity);
+
+	UMaterialEditorOnlyData* EditorOnly = Mat->GetEditorOnlyData();
+	if (!EditorOnly)
+	{
+		return nullptr;
+	}
+
+	EditorOnly->ExpressionCollection.AddExpression(Color);
+	EditorOnly->ExpressionCollection.AddExpression(Opacity);
+	EditorOnly->ExpressionCollection.AddExpression(Shading);
+	EditorOnly->FrontMaterial.Connect(0, Shading);
+	EditorOnly->EmissiveColor.Connect(0, Color);
+	EditorOnly->BaseColor.Connect(0, Color);
+	EditorOnly->Opacity.Connect(0, Opacity);
+
+	Mat->UpdateCachedExpressionData();
+	Mat->PostEditChange();
+	Mat->ForceRecompileForRendering();
+	Mat->AddToRoot();
+	Cached = Mat;
+	return Cached;
+#else
+	return LoadObject<UMaterialInterface>(
+		nullptr, TEXT("/Game/Enemy/M_MutantWarmthOverlay.M_MutantWarmthOverlay"));
+#endif
+}
+
+void AEnemyUnit::ApplyTextureSafeTint()
+{
 	if (!Mesh)
 	{
 		return;
 	}
 
-	UMaterialInterface* Parent = LoadObject<UMaterialInterface>(
-		nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	if (!Parent)
+	Mesh->SetOverlayMaterial(nullptr);
+
+	// pack monster mats sample a texture straight into Base Color and expose no vector param.
+	// a solid BasicShapeMaterial MID would wipe that texture, so only multiply when a param exists
+	static const FName TintNames[] = {
+		TEXT("Tint"),
+		TEXT("Color"),
+		TEXT("ColorMultiply"),
+		TEXT("BaseColorMultiply"),
+		TEXT("MultiplyColor"),
+		TEXT("DiffuseColor"),
+		TEXT("BaseColorTint"),
+	};
+
+	// 40% toward the wash, 60% white, so a multiply param cannot flatten the albedo
+	const FLinearColor Subtle = FMath::Lerp(FLinearColor::White, MeshTint, 0.4f);
+	bool bAppliedParam = false;
+	const int32 MatCount = Mesh->GetNumMaterials();
+	for (int32 Slot = 0; Slot < MatCount; ++Slot)
 	{
-		ApplyTint();
+		UMaterialInterface* Mat = Mesh->GetMaterial(Slot);
+		if (!Mat)
+		{
+			continue;
+		}
+
+		TArray<FMaterialParameterInfo> Infos;
+		TArray<FGuid> Ids;
+		Mat->GetAllVectorParameterInfo(Infos, Ids);
+
+		FName Match = NAME_None;
+		for (const FMaterialParameterInfo& Info : Infos)
+		{
+			for (const FName& Name : TintNames)
+			{
+				if (Info.Name == Name)
+				{
+					Match = Name;
+					break;
+				}
+			}
+			if (Match != NAME_None)
+			{
+				break;
+			}
+		}
+		if (Match == NAME_None)
+		{
+			continue;
+		}
+
+		if (UMaterialInstanceDynamic* Mid = Mesh->CreateAndSetMaterialInstanceDynamic(Slot))
+		{
+			Mid->SetVectorParameterValue(Match, Subtle);
+			bAppliedParam = true;
+		}
+	}
+	if (bAppliedParam)
+	{
 		return;
 	}
 
-	// engine basic shape mat is authored for static meshes — allow it on this skeletal body
-	Parent->CheckMaterialUsage(MATUSAGE_SkeletalMesh);
-
-	UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this);
-	if (!Mid)
+	// DefaultPBR has no color pin. overlay is a separate translucent pass, so the textured body stays
+	UMaterialInterface* OverlayParent = GetMutantWarmthOverlayParent();
+	if (!OverlayParent)
 	{
-		ApplyTint();
+		UE_LOG(LogTemp, Warning,
+			TEXT("[PortalProtect] Mutant warmth overlay material missing. Body stays textured with no wash."));
 		return;
 	}
 
-	Mid->SetVectorParameterValue(TEXT("Color"), Tint);
-	const int32 MatCount = FMath::Max(Mesh->GetNumMaterials(), 1);
-	for (int32 i = 0; i < MatCount; ++i)
+	UMaterialInstanceDynamic* Overlay = UMaterialInstanceDynamic::Create(OverlayParent, this);
+	if (!Overlay)
 	{
-		Mesh->SetMaterial(i, Mid);
+		return;
 	}
+
+	// 0.34 reads warm vs cool at path distance. 0.25 fades into the hide, 0.45 starts to posterize spots
+	constexpr float OverlayOpacity = 0.34f;
+	Overlay->SetVectorParameterValue(TEXT("TintColor"), MeshTint);
+	Overlay->SetScalarParameterValue(TEXT("Opacity"), OverlayOpacity);
+	Mesh->SetOverlayMaterial(Overlay);
 }
 
 // spawner passes waypoint list, snap to first path cell

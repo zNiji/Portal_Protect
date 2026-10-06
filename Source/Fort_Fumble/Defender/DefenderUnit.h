@@ -81,12 +81,12 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Defender|Combat")
 	float AttackCooldown = 0.65f;
 
-	// mortar only — splash on primary impact
+	// mortar only — other enemies around the impact, primary keeps the direct hit
 	UPROPERTY(EditAnywhere, Category = "Defender|Combat")
-	float SplashRadius = 240.f;
+	float SplashRadius = 0.f;
 
 	UPROPERTY(EditAnywhere, Category = "Defender|Combat")
-	float SplashDamage = 8.f;
+	float SplashDamage = 0.f;
 
 	UPROPERTY(EditAnywhere, Category = "Defender")
 	EDefenderType DefenderType = EDefenderType::Cannon;

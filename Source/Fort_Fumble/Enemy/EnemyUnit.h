@@ -139,8 +139,8 @@ private:
 	void UpdateHealthBar();
 	void ApplyMeshSetup(USkeletalMesh* InMesh, UAnimSequence* InIdle, UAnimSequence* InWalk);
 	void ApplyTint();
-	// solid MID color — pack mats have no tint parameter, so mutants stay readable
-	void ApplyForcedTint(const FLinearColor& Tint);
+	// color param when the mesh has one. otherwise a translucent overlay wash so the texture stays
+	void ApplyTextureSafeTint();
 	ADefenderUnit* FindNearbyDefender(float Range) const;
 	ACentralTower* FindTower() const;
 	void RefreshDamageVisual();

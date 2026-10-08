@@ -32,6 +32,7 @@
 
 #include "Engine/StaticMesh.h"
 
+namespace PortalShaders
 {
 #if WITH_EDITOR
 	struct FGraph

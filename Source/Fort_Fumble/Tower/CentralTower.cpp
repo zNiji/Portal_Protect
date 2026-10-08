@@ -1,6 +1,7 @@
 // portal objective - HP and passive shooting at nearby slimes
 
 #include "Tower/CentralTower.h"
+#include "Core/PortalShaders.h"
 #include "Core/UpgradeVisuals.h"
 #include "Enemy/EnemyUnit.h"
 #include "Components/StaticMeshComponent.h"
@@ -76,6 +77,7 @@ void ACentralTower::BeginPlay()
 {
 	Super::BeginPlay();
 	Health = MaxHealth;
+	bUsingPortalShader = PortalShaders::ApplyPortalMaterials(BaseMesh, this);
 	EnsureUpgradeRing();
 	ApplyVisualColor();
 }
@@ -176,14 +178,22 @@ void ACentralTower::ApplyVisualColor()
 		return;
 	}
 
-	// pack portal mat has no color param - pulse scale instead for damage feedback
 	const float Ratio = MaxHealth > 0.f ? Health / MaxHealth : 0.f;
-	const float HealthMul = FMath::Lerp(0.85f, 1.f, Ratio);
-	BaseMesh->SetRelativeScale3D(BaseScaleVec * HealthMul * UpgradeVisualScale);
-
-	if (IsValid(PortalMaterial))
+	if (bUsingPortalShader)
 	{
-		BaseMesh->SetMaterial(0, PortalMaterial);
+		// colour lives in the material. keep the mesh scale so collision does not shrink
+		PortalShaders::SetPortalHealthAlpha(BaseMesh, Ratio);
+		BaseMesh->SetRelativeScale3D(BaseScaleVec * UpgradeVisualScale);
+	}
+	else
+	{
+		// pack portal mat has no color param - pulse scale instead for damage feedback
+		const float HealthMul = FMath::Lerp(0.85f, 1.f, Ratio);
+		BaseMesh->SetRelativeScale3D(BaseScaleVec * HealthMul * UpgradeVisualScale);
+		if (IsValid(PortalMaterial))
+		{
+			BaseMesh->SetMaterial(0, PortalMaterial);
+		}
 	}
 
 	UpdateUpgradeAccent();

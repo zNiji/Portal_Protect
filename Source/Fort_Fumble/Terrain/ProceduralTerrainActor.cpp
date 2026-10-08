@@ -2,6 +2,7 @@
 // SampleHeight, CarvePaths, BuildDefenderSlots, BuildMesh, dressing, border walls
 
 #include "Terrain/ProceduralTerrainActor.h"
+#include "Core/PortalShaders.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -591,6 +592,13 @@ void AProceduralTerrainActor::SpawnEnvironmentDressing()
 		Comp->SetMobility(EComponentMobility::Movable);
 		Comp->SetupAttachment(GetRootComponent());
 		Comp->SetStaticMesh(Mesh);
+		const bool bTree = (Mesh == TreeMesh);
+		if (bTree)
+		{
+			// nanite skips WPO. set this before the proxy is created
+			Comp->bDisallowNanite = true;
+			Comp->SetEvaluateWorldPositionOffset(true);
+		}
 
 		// player bumps props, enemies ignore them (they follow waypoints off-path)
 		// mesh simple collision, QueryAndPhysics for runtime components
@@ -609,6 +617,11 @@ void AProceduralTerrainActor::SpawnEnvironmentDressing()
 		Comp->SetRelativeScale3D(FVector(Scale));
 
 		Comp->RegisterComponent();
+		if (bTree)
+		{
+			// after register, so the override is on the proxy that actually draws the tree
+			PortalShaders::ApplyTreeSway(Comp);
+		}
 		DressingComponents.Add(Comp);
 		RememberDressingFootprint(Comp);
 		return true;

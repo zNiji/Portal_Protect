@@ -89,6 +89,9 @@ private:
 	void EnsureUpgradeRing();
 	void UpdateUpgradeAccent();
 
+	// true after the health-tinted stone material is on the portal mesh
+	bool bUsingPortalShader = false;
+
 	float Health = 500.f;
 	float AttackTimer = 0.f;
 	float BaseVisualScale = 1.35f;

@@ -1,5 +1,4 @@
-// terrain generation impl - GenerateTerrain orchestrates the pipeline
-// SampleHeight, CarvePaths, BuildDefenderSlots, BuildMesh, dressing, border walls
+// height grid, then paths / pads / mesh / props / walls
 
 #include "Terrain/ProceduralTerrainActor.h"
 #include "Core/PortalShaders.h"

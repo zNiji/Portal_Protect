@@ -201,6 +201,7 @@ void ACentralTower::ApplyVisualColor()
 
 namespace TowerUpgradeStats
 {
+	// hint skips the small fire-rate bump. the other percents have to match these muls
 	constexpr float HealthMul = 1.30f;     // +30%
 	constexpr float DamageMul = 1.18f;     // +18%
 	constexpr float CooldownMul = 0.92f;   // ~+9% fire rate

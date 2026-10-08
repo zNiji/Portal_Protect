@@ -2,6 +2,7 @@
 
 #include "Defender/DefenderUnit.h"
 #include "Defender/DefenderPlacementSpot.h"
+#include "Core/MatchVfx.h"
 #include "Core/UpgradeVisuals.h"
 #include "Enemy/EnemyUnit.h"
 #include "Game/PortalProtectGameMode.h"
@@ -464,6 +465,8 @@ void ADefenderUnit::TryAttack()
 		if (UWorld* World = GetWorld())
 		{
 			DrawDebugSphere(World, HitLoc, SplashRadius, 16, FColor::Orange, false, 0.25f, 0, 2.f);
+			// same system as a kill, pulled down so the death puff stays louder
+			MatchVfx::SpawnDeathBurst(World, HitLoc, 0.55f);
 		}
 	}
 
@@ -493,8 +496,7 @@ void ADefenderUnit::ApplySplashAt(const FVector& Center, AEnemyUnit* PrimaryTarg
 		return;
 	}
 
-	// distance against living enemies, not a sphere trace. enemy capsules are ECC_Pawn,
-	// so a WorldStatic/WorldDynamic overlap would miss everyone except the aimed target
+	// distance check, not an overlap. enemy capsules are ECC_Pawn so a static/dynamic trace misses them
 	TArray<AActor*> Found;
 	UGameplayStatics::GetAllActorsOfClass(World, AEnemyUnit::StaticClass(), Found);
 

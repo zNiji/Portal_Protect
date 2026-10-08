@@ -4,6 +4,7 @@
 #include "Enemy/EnemyProjectile.h"
 #include "Enemy/EnemyHealthBarWidget.h"
 #include "Game/PortalProtectGameMode.h"
+#include "Core/MatchVfx.h"
 #include "Tower/CentralTower.h"
 #include "Defender/DefenderUnit.h"
 #include "Animation/AnimSequence.h"
@@ -525,8 +526,7 @@ void AEnemyUnit::ApplyTextureSafeTint()
 
 	Mesh->SetOverlayMaterial(nullptr);
 
-	// pack monster mats sample a texture straight into Base Color and expose no vector param.
-	// a solid BasicShapeMaterial MID would wipe that texture, so only multiply when a param exists
+	// pack mats have no color pin. a solid MID would wipe the texture, so only multiply when a param exists
 	static const FName TintNames[] = {
 		TEXT("Tint"),
 		TEXT("Color"),
@@ -662,6 +662,8 @@ void AEnemyUnit::ApplyDamage(float Amount)
 			{
 				GM->AddScore(KillScore);
 			}
+			// shared puff with mortar hits. this scale is the one that should read
+			MatchVfx::SpawnDeathBurst(World, GetActorLocation(), 1.15f);
 		}
 		Destroy();
 	}

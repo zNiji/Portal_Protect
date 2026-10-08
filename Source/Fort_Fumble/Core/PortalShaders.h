@@ -8,8 +8,7 @@ class UStaticMeshComponent;
 
 namespace PortalShaders
 {
-	// opaque slots: stone atlas times a health multiply. no vertex offset.
-	// the pack's translucent portal material is left on its own slot.
+	// opaque stone slots only. leave the pack's translucent swirl on its own slot
 	bool ApplyPortalMaterials(UStaticMeshComponent* Mesh, UObject* Outer);
 
 	// 1 = full health, 0 = empty. ignored on slots that are not our dynamic instances

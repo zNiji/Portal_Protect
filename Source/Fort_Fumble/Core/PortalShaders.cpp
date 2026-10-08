@@ -1,5 +1,4 @@
-// graph materials built in the editor module, same idea as the mutant warmth overlay.
-// portal: stone atlas times a health tint, no vertex motion. trees: canopy sway.
+// portal health tint and tree sway, built in code like the mutant warmth wash
 
 #include "Core/PortalShaders.h"
 
@@ -104,8 +103,7 @@ namespace PortalShaders
 		return ClampExpr;
 	}
 
-	// white at full health. half health is a clear warm orange. empty is a strong warning red.
-	// the atlas stays in the product, so the stone pattern is still visible.
+	// white at full, warm orange at half, warning red when empty. multiply so the stone atlas still shows
 	static UMaterialExpression* MakeHealthTintedColor(FGraph& G, UMaterialExpression* TextureColor)
 	{
 		UMaterialExpressionScalarParameter* Health = G.Node<UMaterialExpressionScalarParameter>();
@@ -215,8 +213,7 @@ namespace PortalShaders
 
 	static UMaterial* BuildPortalMaterial(const TCHAR* Name)
 	{
-		// stone slot on SM_PortalA is MI_DefaultPBR, which samples this atlas.
-		// T_Portal01 is the swirl inside MI_Portal01, not the arch albedo.
+		// stone slot on SM_PortalA is this atlas via MI_DefaultPBR. T_Portal01 is the swirl, not the arch
 		UTexture* Albedo = LoadObject<UTexture>(nullptr, TEXT("/Game/RPGTinyFantasyForest/Texture/T_BaseColor.T_BaseColor"));
 		if (!Albedo)
 		{

@@ -62,9 +62,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Spawner|Waves")
 	float SpawnInterval = 2.35f;
 
-	// safety: if a stuck enemy blocks forever, force next wave after this
+	// safety: if a stuck enemy blocks forever, force the next wave after this.
+	// longer than a slow tank's walk (about 60s) plus a short fight, so a live wave is not skipped.
+	// the last wave never force-clears — victory requires every enemy dead
 	UPROPERTY(EditAnywhere, Category = "Spawner|Waves")
-	float MaxClearWait = 50.f;
+	float MaxClearWait = 100.f;
 
 	UPROPERTY(EditAnywhere, Category = "Spawner")
 	TSubclassOf<AEnemyUnit> EnemyClass;

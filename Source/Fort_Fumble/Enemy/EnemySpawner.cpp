@@ -99,9 +99,13 @@ void AEnemySpawner::Tick(float DeltaTime)
 	{
 		ClearWaitTimer += DeltaTime;
 		const int32 Alive = GetEnemiesRemaining();
-		if (Alive <= 0 || ClearWaitTimer >= MaxClearWait)
+		const bool bCleared = Alive <= 0;
+		// timeout can start the next wave if something is stuck. it must not award the win
+		const bool bForceNext = !bCleared && ClearWaitTimer >= MaxClearWait && CurrentWave < MaxWaves;
+		if (bCleared || bForceNext)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[PortalProtect] Wave %d cleared"), CurrentWave);
+			UE_LOG(LogTemp, Log, TEXT("[PortalProtect] Wave %d %s"),
+				CurrentWave, bCleared ? TEXT("cleared") : TEXT("forced forward with enemies still alive"));
 
 			// bake skill feedback into next wave BEFORE we decide rest length
 			UpdateAdaptiveDifficulty();

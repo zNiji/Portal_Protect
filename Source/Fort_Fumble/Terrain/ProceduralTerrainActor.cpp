@@ -383,6 +383,8 @@ void AProceduralTerrainActor::SpawnMapBorder()
 	// slightly outside outer verts, overlap at corners so no gaps
 	const float Rim = Half + Thickness * 0.5f;
 	const float Length = (Half + Thickness) * 2.f;
+	// bury the wall through the lowest rim cell so a slope cannot open sky under it
+	const float WallSink = FMath::Max(80.f, CellSize);
 
 	// sample rim height so walls sit on ground not floating
 	auto RimGroundZ = [this](int32 X, int32 Y) -> float
@@ -391,10 +393,21 @@ void AProceduralTerrainActor::SpawnMapBorder()
 		Y = FMath::Clamp(Y, 0, Resolution - 1);
 		return Heights[Index(X, Y)];
 	};
+	// top stays on the high rim sample so the wall reads the same from inside
 	const float GroundZ = FMath::Max(
 		FMath::Max(RimGroundZ(0, CenterY), RimGroundZ(Resolution - 1, CenterY)),
 		FMath::Max(RimGroundZ(CenterX, 0), RimGroundZ(CenterX, Resolution - 1)));
-	const float WallCenterZ = GroundZ + WallH * 0.5f;
+	const float TopZ = GroundZ + WallH;
+
+	auto EdgeMinZ = [&RimGroundZ, this](bool bFixX, int32 Fixed) -> float
+	{
+		float MinZ = TNumericLimits<float>::Max();
+		for (int32 I = 0; I < Resolution; ++I)
+		{
+			MinZ = FMath::Min(MinZ, bFixX ? RimGroundZ(Fixed, I) : RimGroundZ(I, Fixed));
+		}
+		return MinZ;
+	};
 
 	UMaterialInstanceDynamic* WallMID = PortalTerrainVisual::MakeTintedMID(
 		this, FLinearColor(0.12f, 0.11f, 0.10f));
@@ -405,12 +418,24 @@ void AProceduralTerrainActor::SpawnMapBorder()
 		FVector Scale; // engine cube is 100uu, scale = desired / 100
 	};
 
-	const float S = 0.01f; // 100uu cube → world size via scale
+	auto MakeWall = [&](const FVector& XY, float MinZ) -> FWallSpec
+	{
+		const float BottomZ = MinZ - WallSink;
+		const float Height = FMath::Max(WallH, TopZ - BottomZ);
+		const float CenterZ = TopZ - Height * 0.5f;
+		const float S = 0.01f; // 100uu cube → world size via scale
+		const bool bAlongY = FMath::Abs(XY.X) > FMath::Abs(XY.Y);
+		const FVector Scale = bAlongY
+			? FVector(Thickness * S, Length * S, Height * S)
+			: FVector(Length * S, Thickness * S, Height * S);
+		return { FVector(XY.X, XY.Y, CenterZ), Scale };
+	};
+
 	const TArray<FWallSpec> Specs = {
-		{ FVector(Rim, 0.f, WallCenterZ), FVector(Thickness * S, Length * S, WallH * S) },
-		{ FVector(-Rim, 0.f, WallCenterZ), FVector(Thickness * S, Length * S, WallH * S) },
-		{ FVector(0.f, Rim, WallCenterZ), FVector(Length * S, Thickness * S, WallH * S) },
-		{ FVector(0.f, -Rim, WallCenterZ), FVector(Length * S, Thickness * S, WallH * S) },
+		MakeWall(FVector(Rim, 0.f, 0.f), EdgeMinZ(true, Resolution - 1)),
+		MakeWall(FVector(-Rim, 0.f, 0.f), EdgeMinZ(true, 0)),
+		MakeWall(FVector(0.f, Rim, 0.f), EdgeMinZ(false, Resolution - 1)),
+		MakeWall(FVector(0.f, -Rim, 0.f), EdgeMinZ(false, 0)),
 	};
 
 	for (int32 I = 0; I < Specs.Num(); ++I)
@@ -447,7 +472,25 @@ void AProceduralTerrainActor::SpawnMapBorder()
 
 	FRandomStream Stream(Seed ^ 0xB0B0B0B0);
 	const int32 RocksPerSide = FMath::Clamp(Resolution / 6, 8, 18);
-	auto PlaceRock = [this, &Stream, GroundZ](const FVector& LocalXY, float Yaw)
+	// overlap local ground so a lower neighbour cell cannot show sky under the rock
+	const float RockSink = FMath::Max(50.f, CellSize * 0.55f);
+	auto LocalGroundZ = [this, Half](float LocalX, float LocalY) -> float
+	{
+		const int32 X0 = FMath::Clamp(FMath::RoundToInt((LocalX + Half) / CellSize), 0, Resolution - 1);
+		const int32 Y0 = FMath::Clamp(FMath::RoundToInt((LocalY + Half) / CellSize), 0, Resolution - 1);
+		float MinZ = TNumericLimits<float>::Max();
+		for (int32 OY = -1; OY <= 1; ++OY)
+		{
+			for (int32 OX = -1; OX <= 1; ++OX)
+			{
+				MinZ = FMath::Min(MinZ, Heights[Index(
+					FMath::Clamp(X0 + OX, 0, Resolution - 1),
+					FMath::Clamp(Y0 + OY, 0, Resolution - 1))]);
+			}
+		}
+		return MinZ;
+	};
+	auto PlaceRock = [this, &Stream, RockSink, &LocalGroundZ](const FVector& LocalXY, float Yaw)
 	{
 		UStaticMesh* Rock = RockMeshes[Stream.RandRange(0, RockMeshes.Num() - 1)].Get();
 		if (!Rock)
@@ -462,10 +505,15 @@ void AProceduralTerrainActor::SpawnMapBorder()
 		}
 		Comp->SetupAttachment(GetRootComponent());
 		Comp->SetStaticMesh(Rock);
-		Comp->SetRelativeLocation(FVector(LocalXY.X, LocalXY.Y, GroundZ + 10.f));
 		Comp->SetRelativeRotation(FRotator(0.f, Yaw, 0.f));
 		const float Scale = Stream.FRandRange(1.1f, 1.8f);
-		Comp->SetRelativeScale3D(FVector(Scale, Scale, Scale * Stream.FRandRange(1.2f, 1.8f)));
+		const float ScaleZ = Scale * Stream.FRandRange(1.2f, 1.8f);
+		Comp->SetRelativeScale3D(FVector(Scale, Scale, ScaleZ));
+		// mesh bottom (pivot is not always at the base) sits below the lowest nearby rim cell
+		const FBoxSphereBounds MeshBounds = Rock->GetBounds();
+		const float BottomLocalZ = (MeshBounds.Origin.Z - MeshBounds.BoxExtent.Z) * ScaleZ;
+		const float LocZ = LocalGroundZ(LocalXY.X, LocalXY.Y) - RockSink - BottomLocalZ;
+		Comp->SetRelativeLocation(FVector(LocalXY.X, LocalXY.Y, LocZ));
 		// visual only - cubes already block, rocks are just decoration
 		Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Comp->SetGenerateOverlapEvents(false);
